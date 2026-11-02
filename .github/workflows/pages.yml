@@ -30,7 +30,7 @@ jobs:
       - name: Assemble site
         run: |
           mkdir -p _site/stl
-          cp preview/index.html _site/index.html
+          cp index.html _site/index.html
           cp stl/*.stl _site/stl/
           touch _site/.nojekyll
       - uses: actions/configure-pages@v5

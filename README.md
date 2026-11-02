@@ -18,8 +18,8 @@ A standard Cherry MX switch and keycap in a low-profile, 3D-printable housing. T
 | `src/params.mjs` | Every dimension (switch, collar, PCB, battery, fasteners) |
 | `src/model.mjs` | Parametric CSG model ([manifold-3d](https://github.com/elalish/manifold)) |
 | `scripts/check.mjs` | Validity and interference checks across all parts and components (also run at full key travel) |
-| `scripts/build.mjs` | Writes `stl/*.stl` (print orientation) and `preview/index.html` |
-| `preview/index.html` | Self-contained three.js viewer: explode, cut-away, key press, light modes |
+| `scripts/build.mjs` | Writes `stl/*.stl` (print orientation) and `index.html` from `preview/template.html` |
+| `index.html` | Self-contained three.js viewer (explode, cut-away, key press, light modes). Open it locally or via GitHub Pages |
 
 ```bash
 npm install
@@ -29,7 +29,7 @@ npm run check     # fit checks only
 
 ## Live preview (GitHub Pages)
 
-`.github/workflows/pages.yml` rebuilds the model on every push to `main`. It fails if any parts collide, and otherwise publishes the preview with STL download links. To turn it on once, go to **Settings → Pages → Build and deployment → Source** and choose **GitHub Actions**. Then re-run the **Pages** workflow from the Actions tab.
+`.github/workflows/pages.yml` rebuilds the model on every push to `main`. It fails if any parts collide, and otherwise publishes the preview with STL download links. To turn it on once, go to **Settings → Pages → Build and deployment → Source** and choose **GitHub Actions**. Then re-run the **Pages** workflow from the Actions tab. ("Deploy from a branch" also works, because `index.html` is committed at the root, but that skips the fit checks.)
 
 ## Printing
 

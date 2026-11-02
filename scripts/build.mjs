@@ -1,4 +1,4 @@
-// Builds print-ready STLs (stl/) and the self-contained 3D preview (preview/index.html).
+// Builds print-ready STLs (stl/) and the self-contained 3D preview (index.html at the repo root, so GitHub Pages serves it in either source mode).
 //   node scripts/build.mjs
 import Module from 'manifold-3d';
 import { mkdirSync, writeFileSync, readFileSync } from 'node:fs';
@@ -80,5 +80,5 @@ const data = {
 };
 const tpl = readFileSync(join(root, 'preview', 'template.html'), 'utf8');
 const html = tpl.replace('/*__MODEL_DATA__*/', `window.MODEL = ${JSON.stringify(data)};`);
-writeFileSync(join(root, 'preview', 'index.html'), html);
-console.log(`preview/index.html  ${(html.length / 1024).toFixed(0)} KB`);
+writeFileSync(join(root, 'index.html'), html);
+console.log(`index.html  ${(html.length / 1024).toFixed(0)} KB`);

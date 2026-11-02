@@ -401,8 +401,7 @@ const prints = [
   ['upper_housing.stl', 'opaque · upright'],
   ['diffuser.stl', 'frosted · upright'],
 ];
-// STL downloads: next to the page on GitHub Pages, one folder up when opened from a local clone.
-const stlBase = location.protocol === 'file:' ? '../stl/' : 'stl/';
+const stlBase = 'stl/'; // index.html sits at the repo root, next to stl/
 $('print').innerHTML = prints.map(([a, b]) => `<tr><td><a href="${stlBase}${a}" download><code>${a}</code></a></td><td>${b}</td></tr>`).join('') +
   `<tr><td colspan="2" class="note" style="text-align:left;font-family:var(--font-body)">No supports needed. Print the diffuser in natural PETG or "transparent" PLA at 100% infill, then lightly sand or bead-blast it for an even frost.</td></tr>`;
 
