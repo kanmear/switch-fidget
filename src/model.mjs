@@ -1,12 +1,14 @@
 // Parametric model of the MX switch fidget, built with manifold-3d (robust mesh CSG).
 // Returns the two printed parts plus reference components (switch, keycap, PCB, LEDs,
-// battery, screws) used by the preview and by the interference checks.
+// battery, screws) used by the preview and by the interference checks. The keycap and stem are
+// modelled at rest; press travel is a pure translation by P.travel along −Z.
 
-import { P as DEFAULT_P, levels } from './params.mjs';
+import { P as DEFAULT_P, levels, cell } from './params.mjs';
 
-export function buildModel(wasm, P = DEFAULT_P, { pressed = 0 } = {}) {
+export function buildModel(wasm, P = DEFAULT_P) {
   const { Manifold: M, CrossSection: CS } = wasm;
   const L = levels(P);
+  const C = cell(P);
   const seg = P.seg;
 
   const rrect = (w, h, r = 0) =>
@@ -70,12 +72,19 @@ export function buildModel(wasm, P = DEFAULT_P, { pressed = 0 } = {}) {
   // screw posts
   diff = diff.add(U(P.screwPos.map(p => at(cyl(0, 0, P.diffFloor - 0.01, Zb, P.postD / 2), p)))
     .intersect(taper(0, Zb)));
-  // battery cradle
-  const [bw, bl] = P.batt, bcx = bw / 2 + P.battClear, bcy = bl / 2 + P.battClear, cw = P.cradleW;
-  const cradle = box(-bcx - cw, bcx + cw, -bcy - cw, bcy + cw, P.diffFloor - 0.01, P.diffFloor + P.cradleH)
-    .subtract(box(-bcx, bcx, -bcy, bcy, 0, 10))
-    .subtract(box(-2.5, 2.5, 0, 20, 0, 10)); // wire exit toward the JST plug
-  diff = diff.add(cradle);
+  // battery cradle: a low rim around the cell, open toward the JST plug for the leads
+  const cw = P.cradleW, cH = P.diffFloor + P.cradleH;
+  let cradle;
+  if (C.kind === 'pouch') {
+    const [bw, bl] = C.size, bcx = bw / 2 + P.battClear, bcy = bl / 2 + P.battClear;
+    cradle = box(-bcx - cw, bcx + cw, -bcy - cw, bcy + cw, P.diffFloor - 0.01, cH)
+      .subtract(box(-bcx, bcx, -bcy, bcy, 0, 10));
+  } else {
+    const r = C.d / 2 + P.battClear;
+    cradle = cyl(C.cx, C.cy, P.diffFloor - 0.01, cH, r + cw).subtract(cyl(C.cx, C.cy, 0, 10, r));
+  }
+  cradle = cradle.subtract(box(-2.5, 2.5, C.cy, 30, 0, 10)); // lead exit toward the JST plug
+  diff = diff.add(cradle.intersect(taper(0, Zb)));
   // USB-C: pocket for the receptacle body + rounded mouth through the wall
   const [mw, mh, mr] = P.usbMouth;
   const usbZc = L.usbZ0 + P.usbH / 2;
@@ -89,7 +98,6 @@ export function buildModel(wasm, P = DEFAULT_P, { pressed = 0 } = {}) {
   // =====================================================================
   // REFERENCE COMPONENTS (not printed)
   // =====================================================================
-  const dz = -pressed * P.travel;
   const sw = U([
     box(-6.95, 6.95, -6.95, 6.95, Zpcb, Zpt),
     M.hull([prism(rrect(15.6, 15.6, 0.6), Zpt, Zpt + 0.8),
@@ -100,9 +108,9 @@ export function buildModel(wasm, P = DEFAULT_P, { pressed = 0 } = {}) {
   ]).subtract(at(box(-2.6, 2.6, -1.6, 1.6, Zpcb - 0.1, Zpcb + 4.5), P.ledPos));
   const stemTop = Zpt + P.housingAbovePlate + P.stemAboveHousing;
   const stem = U([box(-2.05, 2.05, -0.6, 0.6, stemTop - 4.6, stemTop),
-                  box(-0.65, 0.65, -2.05, 2.05, stemTop - 4.6, stemTop)]).translate([0, 0, dz]);
+                  box(-0.65, 0.65, -2.05, 2.05, stemTop - 4.6, stemTop)]);
 
-  const kH = P.keycapH, kz = Zpt + P.keycapBottomAbovePlate + dz;
+  const kH = P.keycapH, kz = Zpt + P.keycapBottomAbovePlate;
   let keycap = M.hull([prism(rrect(18.0, 18.0, 1.0), 0, 0.01), prism(rrect(12.8, 14.6, 2.2), kH - 0.01, kH)]);
   keycap = keycap.subtract(U([
     M.cylinder(40, 40, 40, 160, true).rotate([90, 0, 0]).translate([0, 0, kH - 0.9 + 40]),
@@ -133,19 +141,27 @@ export function buildModel(wasm, P = DEFAULT_P, { pressed = 0 } = {}) {
     ...[[1, 1], [1, -1], [-1, 1], [-1, -1]].map(([sx, sy]) => at(box(-1, 1, -1, 1, Zpcb, Zpcb + 0.9), [sx * P.haloPos, sy * P.haloPos])),
     at(box(-1.6, 1.6, -1.4, 1.4, Zpcb - 0.6, Zpcb + 1.2), P.ledPos), // SK6812MINI-E in the switch window
   ]);
-  const [bx, by, bz] = P.batt;
-  const battery = U([
-    M.hull([prism(rrect(bx, by - 1.0, 1.2), L.battZ0, L.battZ1),
-            prism(rrect(bx - 0.6, by, 1.0), L.battZ0 + 0.4, L.battZ1 - 0.4)]),
-  ]);
-  const battTab = box(-2.0, 2.0, by / 2, by / 2 + 1.2, L.battZ0 + 1.2, L.battZ0 + 1.8);
+  let battery, battTab;
+  if (C.kind === 'pouch') {
+    const [bx, by] = C.size;
+    battery = M.hull([prism(rrect(bx, by - 1.0, 1.2), L.battZ0, L.battZ1),
+                      prism(rrect(bx - 0.6, by, 1.0), L.battZ0 + 0.4, L.battZ1 - 0.4)]);
+    battTab = box(-2.0, 2.0, by / 2, by / 2 + 1.2, L.battZ0 + 1.2, L.battZ0 + 1.8);
+  } else {
+    // tabbed coin cell: the can sits between two welded tabs; the top tab bends out toward the plug
+    const t = P.coinTabs / 2, r = C.d / 2;
+    battery = M.hull([cyl(C.cx, C.cy, L.battZ0 + t, L.battZ1 - t - 0.3, r),
+                      cyl(C.cx, C.cy, L.battZ1 - t - 0.01, L.battZ1 - t, r - 0.6)]);
+    battTab = U([box(-1.5, 1.5, C.cy - r + 1.5, C.cy + r + 1.0, L.battZ1 - t + 0.01, L.battZ1 - 0.01),
+                 box(-1.5, 1.5, C.cy - r + 1.5, C.cy + r - 1.5, L.battZ0 + 0.01, L.battZ0 + t - 0.01)]);
+  }
   const screws = U(P.screwPos.map(p => at(U([
     cyl(0, 0, P.headDepth - 1.3, P.headDepth, 1.9, 32),
     cyl(0, 0, P.headDepth, P.headDepth + 10, 1.0, 24),
   ]), p)));
 
   return {
-    L,
+    L, cell: C,
     printed: { upper, diffuser: diff },
     reference: { switch: sw, stem, keycap, pcb, socket, usb, chips, ledsBottom, ledsHalo, battery, battTab, screws },
   };

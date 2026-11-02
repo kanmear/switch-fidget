@@ -52,17 +52,39 @@ export const P = {
   screwClearD: 2.4, screwPilotD: 1.7, screwPilotDepth: 4.3,
   headD: 4.0, headDepth: 2.8, postD: 4.4,
 
-  // ---------- battery (LiPo pouch, JST-SH plug) ----------
-  batt: [10.0, 20.0, 3.0], // 301020 ≈ 40 mAh
+  // ---------- battery (key into BATTERIES below; always on a JST-SH plug) ----------
+  battery: 'lipo301020',
   battClear: 0.4, cradleH: 1.2, cradleW: 1.0,
+  coinTabs: 0.4,       // solder tabs on a tabbed coin cell (top + bottom)
 
   // ---------- keycap mock ----------
   keycapBottomAbovePlate: 6.0,
   keycapH: 8.0,
 };
 
+// Cells the diffuser can hold. A pouch sits in a rectangular cradle and a coin cell sits in a round one.
+// The coin cradle moves north just far enough to clear the M2 screw posts.
+// 20 mm cells (CR2032/LIR2032) are not listed because they can't clear the posts in a 27 mm body (see README).
+export const BATTERIES = {
+  lipo301020: { kind: 'pouch', label: '301020 LiPo pouch', size: [10.0, 20.0, 3.0], volts: 3.7, mAh: 40, rechargeable: true },
+  cp1254:     { kind: 'coin',  label: 'CP1254 / LIR1254 Li-ion coin', d: 12.1, h: 5.4, volts: 3.7, mAh: 55, rechargeable: true },
+  cr1632:     { kind: 'coin',  label: 'CR1632 lithium coin (tabbed)', d: 16.0, h: 3.2, volts: 3.0, mAh: 130, rechargeable: false },
+  cr1620:     { kind: 'coin',  label: 'CR1620 lithium coin (tabbed)', d: 16.0, h: 2.0, volts: 3.0, mAh: 75, rechargeable: false },
+};
+
+// Resolved cell geometry: footprint centre (cx, cy), stack height h (including tabs) and the cradle cut-out.
+export function cell(p = P) {
+  const b = BATTERIES[p.battery];
+  if (!b) throw new Error(`unknown battery '${p.battery}' (one of ${Object.keys(BATTERIES).join(', ')})`);
+  if (b.kind === 'pouch') return { ...b, key: p.battery, cx: 0, cy: 0, h: b.size[2] };
+  const R = b.d / 2 + p.battClear + p.postD / 2 + 0.2; // keep-out radius around each screw post
+  let cy = 0;
+  for (const [sx, sy] of p.screwPos) if (R * R > sx * sx) cy = Math.max(cy, sy + Math.sqrt(R * R - sx * sx));
+  return { ...b, key: p.battery, cx: 0, cy: +cy.toFixed(2), h: b.h + p.coinTabs };
+}
+
 export function levels(p = P) {
-  const Zb = p.diffFloor + p.batt[2] + 0.3 + p.underPcb; // PCB bottom = diffuser top = upper housing bottom
+  const Zb = p.diffFloor + cell(p).h + 0.3 + p.underPcb; // PCB bottom = diffuser top = upper housing bottom
   const Zpcb = Zb + p.pcbThk;                            // PCB top = switch housing bottom
   const Zpt = Zpcb + p.switchBelowPlate;                 // plate top
   const Ztop = Zpt + p.collarAbovePlate;                 // collar rim
@@ -71,6 +93,6 @@ export function levels(p = P) {
   const halfAt = (z) => baseHalf + (topHalf - baseHalf) * (z / Ztop);
   const rAt = (z) => p.baseR + (p.topR - p.baseR) * (z / Ztop);
   return { Zb, Zpcb, Zpt, Ztop, topHalf, baseHalf, halfAt, rAt,
-           battZ0: p.diffFloor, battZ1: p.diffFloor + p.batt[2],
+           battZ0: p.diffFloor, battZ1: p.diffFloor + cell(p).h,
            usbZ0: Zb - p.usbH, usbY0: -(p.pcbSize / 2 + p.usbOverhang) };
 }

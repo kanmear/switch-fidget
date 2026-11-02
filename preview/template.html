@@ -1,10 +1,16 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>MX Switch Fidget</title>
+<meta name="description" content="A hot-swap Cherry MX switch fidget with a frosted LED diffuser. Interactive 3D preview and in-browser configurator with STL export.">
 <meta name="claude:viewport-fit-sides" content="cover">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wdth,wght@100..125,400..800&family=JetBrains+Mono:wght@400;600&display=swap">
 <style>
-  /* Layout: full-height workbench — 3D stage fills the left, a narrow spec/control rail on the right; stacks on phones. */
+  /* Layout: full-height workbench. The 3D stage fills the left and a control rail sits on the right; they stack on phones. */
   :root {
     --bg: #eceef1;
     --panel: #f7f8f9;
@@ -15,6 +21,8 @@
     --accent: #b5700b;
     --accent-ink: #ffffff;
     --chip: #e6e9ed;
+    --good: #2f8f5b;
+    --bad: #c2362b;
     --font-display: "Archivo", "Helvetica Neue", Arial, sans-serif;
     --font-body: "Archivo", "Helvetica Neue", Arial, sans-serif;
     --font-mono: "JetBrains Mono", ui-monospace, "SFMono-Regular", Menlo, monospace;
@@ -22,24 +30,32 @@
   @media (prefers-color-scheme: dark) {
     :root:not([data-theme="light"]) {
       --bg: #0f1114; --panel: #15181c; --stage: #0b0d10; --fg: #e8eaee; --muted: #8f97a4;
-      --line: #262a31; --accent: #f0b43c; --accent-ink: #1a1305; --chip: #1e2228; color-scheme: dark;
+      --line: #262a31; --accent: #f0b43c; --accent-ink: #1a1305; --chip: #1e2228; --good: #4fc485; --bad: #ff6b5e; color-scheme: dark;
     }
   }
   :root[data-theme="dark"] {
     --bg: #0f1114; --panel: #15181c; --stage: #0b0d10; --fg: #e8eaee; --muted: #8f97a4;
-    --line: #262a31; --accent: #f0b43c; --accent-ink: #1a1305; --chip: #1e2228; color-scheme: dark;
+    --line: #262a31; --accent: #f0b43c; --accent-ink: #1a1305; --chip: #1e2228; --good: #4fc485; --bad: #ff6b5e; color-scheme: dark;
   }
-  html, body { height: 100%; }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; margin: 0; }
   body { background: var(--bg); color: var(--fg); font-family: var(--font-body); font-size: 14px; line-height: 1.45; }
   .app { display: grid; grid-template-columns: minmax(0, 1fr) 380px; height: 100%; }
   .stage { position: relative; background: var(--stage); min-height: 0; overflow: hidden; }
-  #c { display: block; width: 100%; height: 100%; touch-action: none; cursor: grab; }
+  #c { display: block; width: 100%; height: 100%; touch-action: none; cursor: grab; outline: none; }
   #c.pressable { cursor: pointer; }
   .hud { position: absolute; left: max(16px, env(safe-area-inset-left, 0px)); top: 16px; pointer-events: none; display: grid; gap: 2px; }
   .hud h1 { margin: 0; font-family: var(--font-display); font-stretch: 118%; font-weight: 750; font-size: 22px; letter-spacing: -0.01em; }
   .hud .dims { font-family: var(--font-mono); font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; }
-  .hint { position: absolute; left: max(16px, env(safe-area-inset-left, 0px)); bottom: 14px; font-size: 12px; color: var(--muted); pointer-events: none; }
-  .quick { position: absolute; right: 16px; bottom: 14px; display: flex; gap: 6px; flex-wrap: wrap; justify-content: flex-end; }
+  .counter { position: absolute; right: max(16px, env(safe-area-inset-right, 0px)); top: 16px; text-align: right; pointer-events: none; }
+  .counter b { display: block; font-family: var(--font-mono); font-size: 22px; font-weight: 600; font-variant-numeric: tabular-nums; line-height: 1.1; }
+  .counter span { font-size: 11px; color: var(--muted); font-family: var(--font-mono); letter-spacing: 0.08em; text-transform: uppercase; }
+  .counter.bump b { animation: bump 160ms ease-out; }
+  @keyframes bump { 50% { transform: scale(1.08); } }
+  .hint { position: absolute; left: max(16px, env(safe-area-inset-left, 0px)); bottom: 14px; font-size: 12px; color: var(--muted); pointer-events: none; max-width: 46%; }
+  .quick { position: absolute; right: max(16px, env(safe-area-inset-right, 0px)); bottom: 14px; display: flex; gap: 6px; flex-wrap: wrap; justify-content: flex-end; }
+  .overlay { position: absolute; inset: 0; display: grid; place-items: center; color: var(--muted); font-size: 13px; pointer-events: none; text-align: center; padding: 24px; }
+  .overlay[hidden] { display: none; }
   .panel { background: var(--panel); border-left: 1px solid var(--line); overflow-y: auto; min-height: 0;
            padding-block: 18px 28px; padding-left: max(18px, env(safe-area-inset-left, 0px)); padding-right: max(18px, env(safe-area-inset-right, 0px));
            display: flex; flex-direction: column; gap: 22px; }
@@ -47,23 +63,36 @@
   section { display: grid; gap: 10px; }
   h2 { margin: 0; font-family: var(--font-mono); font-size: 11px; font-weight: 600; letter-spacing: 0.12em; text-transform: uppercase; color: var(--muted); }
   .row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
-  .row label { flex: 1 1 auto; }
-  input[type=range] { width: 100%; accent-color: var(--accent); }
+  .row > label:first-child { flex: 1 1 auto; }
+  .field { display: grid; gap: 4px; }
+  .field .row { flex-wrap: nowrap; }
+  .field small { color: var(--muted); font-size: 12px; }
+  input[type=range] { width: 100%; accent-color: var(--accent); margin: 2px 0; }
+  select { font: inherit; font-size: 13px; padding: 5px 8px; border-radius: 6px; border: 1px solid var(--line); background: var(--panel); color: var(--fg); width: 100%; }
   .btn { font: inherit; font-size: 13px; font-weight: 600; border: 1px solid var(--line); background: var(--panel); color: var(--fg);
-         padding: 6px 11px; border-radius: 6px; cursor: pointer; }
+         padding: 6px 11px; border-radius: 6px; cursor: pointer; touch-action: manipulation; }
   .btn:hover { border-color: var(--muted); }
   .btn[aria-pressed="true"] { background: var(--fg); color: var(--panel); border-color: var(--fg); }
-  .btn.primary { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); }
-  .btn:focus-visible, input:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  .btn.primary { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); user-select: none; -webkit-user-select: none; }
+  .btn.small { font-size: 12px; padding: 4px 9px; }
+  .btn:disabled { opacity: 0.5; cursor: default; }
+  .btn:focus-visible, input:focus-visible, select:focus-visible, summary:focus-visible, #c:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  .stage .btn { background: color-mix(in srgb, var(--panel) 88%, transparent); backdrop-filter: blur(6px); }
+  .stage .btn[aria-pressed="true"] { background: var(--fg); }
   .seg { display: flex; flex-wrap: wrap; gap: 4px; }
-  .swatches { display: flex; gap: 8px; flex-wrap: wrap; }
+  .swatches { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
   .sw { width: 26px; height: 26px; border-radius: 50%; border: 2px solid var(--panel); box-shadow: 0 0 0 1px var(--line); cursor: pointer; padding: 0; }
   .sw[aria-pressed="true"] { box-shadow: 0 0 0 2px var(--fg); }
+  .picker { position: relative; width: 26px; height: 26px; border-radius: 50%; box-shadow: 0 0 0 1px var(--line); overflow: hidden; cursor: pointer;
+            background: conic-gradient(#ff4d6d, #ffb238, #f2d36b, #57e389, #39c6f0, #9b5cff, #ff4d6d); }
+  .picker[aria-pressed="true"] { box-shadow: 0 0 0 2px var(--fg); }
+  .picker input { position: absolute; inset: 0; width: 100%; height: 100%; opacity: 0; cursor: pointer; border: 0; padding: 0; }
+  .swlabel { font-family: var(--font-mono); font-size: 10.5px; color: var(--muted); width: 64px; }
   .parts { display: grid; gap: 2px; }
-  .part { display: grid; grid-template-columns: 18px 12px 1fr auto; align-items: center; gap: 8px; padding: 4px 0; font-size: 13px; }
+  .part { display: grid; grid-template-columns: 18px 12px 1fr auto; align-items: center; gap: 8px; padding: 4px 0; font-size: 13px; cursor: pointer; }
   .part input { margin: 0; accent-color: var(--accent); }
   .dot { width: 12px; height: 12px; border-radius: 3px; }
-  .tag { font-family: var(--font-mono); font-size: 10.5px; color: var(--muted); }
+  .tag { font-family: var(--font-mono); font-size: 10.5px; color: var(--muted); font-variant-numeric: tabular-nums; }
   table { border-collapse: collapse; width: 100%; font-size: 13px; }
   td { padding: 5px 0; border-bottom: 1px solid var(--line); vertical-align: top; }
   td:last-child { text-align: right; font-family: var(--font-mono); font-size: 12px; font-variant-numeric: tabular-nums; padding-left: 12px; }
@@ -75,27 +104,48 @@
   ul { margin: 0; padding-left: 18px; display: grid; gap: 4px; }
   li::marker { color: var(--muted); }
   .panel a { color: var(--fg); text-decoration-color: var(--accent); text-underline-offset: 3px; }
-  code { font-family: var(--font-mono); font-size: 12px; background: var(--chip); padding: 1px 4px; border-radius: 4px; }
-  .ok { color: #2f8f5b; font-weight: 600; }
-  .note { font-size: 12.5px; color: var(--muted); }
+  code, kbd { font-family: var(--font-mono); font-size: 12px; background: var(--chip); padding: 1px 4px; border-radius: 4px; }
+  kbd { border: 1px solid var(--line); font-size: 11px; }
+  .ok { color: var(--good); font-weight: 600; }
+  .bad { color: var(--bad); font-weight: 600; }
+  .note { font-size: 12.5px; color: var(--muted); margin: 0; }
+  .status { font-size: 12.5px; padding: 8px 10px; border-radius: 6px; background: var(--chip); display: grid; gap: 4px; }
+  .status ul { font-size: 12px; }
+  .callout { border-left: 3px solid var(--accent); padding: 6px 10px; background: var(--chip); border-radius: 0 6px 6px 0; font-size: 12.5px; display: grid; gap: 6px; }
+  .callout ul { padding-left: 16px; }
+  details { border-top: 1px solid var(--line); padding-top: 12px; }
+  details > summary { cursor: pointer; list-style: none; display: flex; justify-content: space-between; align-items: center; }
+  details > summary::-webkit-details-marker { display: none; }
+  details > summary::after { content: "+"; font-family: var(--font-mono); color: var(--muted); }
+  details[open] > summary::after { content: "–"; }
+  details > :not(summary) { margin-top: 10px; }
+  .shortcuts { font-size: 12px; color: var(--muted); display: flex; flex-wrap: wrap; gap: 4px 12px; }
+  .toast { position: fixed; left: 50%; bottom: 24px; transform: translateX(-50%); background: var(--fg); color: var(--panel); padding: 8px 14px; border-radius: 8px;
+           font-size: 13px; opacity: 0; pointer-events: none; transition: opacity 160ms; z-index: 10; }
+  .toast.show { opacity: 1; }
   @media (max-width: 860px) {
-    .app { grid-template-columns: 1fr; grid-template-rows: 62vh auto; height: auto; }
+    .app { grid-template-columns: 1fr; grid-template-rows: 62vh auto; grid-template-rows: 62svh auto; height: auto; }
     .panel { border-left: 0; border-top: 1px solid var(--line); overflow: visible; }
+    .hint { bottom: 56px; max-width: none; right: 16px; }
   }
+  @media (prefers-reduced-motion: reduce) { .counter.bump b { animation: none; } }
 </style>
-
+</head>
+<body>
 <div class="app">
   <div class="stage" id="stage">
-    <canvas id="c" aria-label="3D preview of the MX switch fidget"></canvas>
+    <canvas id="c" tabindex="0" aria-label="3D preview of the MX switch fidget. Press Space to press the key."></canvas>
     <div class="hud">
       <h1>MX Switch Fidget</h1>
       <div class="dims" id="dims"></div>
     </div>
-    <div class="hint" id="hint">Drag to orbit · scroll to zoom · press and hold the keycap</div>
+    <div class="counter" id="counter" aria-live="off"><b id="count">0</b><span>presses</span></div>
+    <div class="overlay" id="overlay">Loading 3D preview…</div>
+    <div class="hint" id="hint"></div>
     <div class="quick">
-      <button class="btn" id="qAssembled" type="button">Assembled</button>
-      <button class="btn" id="qExploded" type="button">Exploded</button>
-      <button class="btn" id="qSection" type="button" aria-pressed="false">Cut away</button>
+      <button class="btn" id="qExplode" type="button" aria-pressed="false" title="Explode (E)">Exploded</button>
+      <button class="btn" id="qSection" type="button" aria-pressed="false" title="Cut away (C)">Cut away</button>
+      <button class="btn" id="qReset" type="button" title="Reset view (0)">Reset view</button>
     </div>
   </div>
 
@@ -103,13 +153,33 @@
     <p class="lede">A standard Cherry MX switch and keycap in a low-profile housing. The opaque top has a raised collar that hides the keycap gap. The frosted lower half lights up from a small custom PCB, which also takes USB-C and reads key presses.</p>
 
     <section>
-      <h2>View</h2>
-      <div class="row"><label for="explode">Explode</label><span class="tag" id="explodeVal">0 mm</span></div>
-      <input type="range" id="explode" min="0" max="1" step="0.01" value="0">
+      <h2>Play</h2>
       <div class="row">
         <button class="btn primary" id="press" type="button">Press key</button>
-        <button class="btn" id="section" type="button" aria-pressed="false">Cut-away section</button>
         <button class="btn" id="spin" type="button" aria-pressed="true">Auto-rotate</button>
+        <button class="btn" id="sound" type="button" aria-pressed="true">Sound</button>
+        <button class="btn" id="haptic" type="button" aria-pressed="false" hidden>Vibrate</button>
+      </div>
+      <div class="field">
+        <div class="row"><label for="switchType">Switch</label></div>
+        <div class="seg" id="switchType" role="group" aria-label="Switch type"></div>
+      </div>
+      <div class="field">
+        <div class="row"><label for="volume">Volume</label><span class="tag" id="volumeVal"></span></div>
+        <input type="range" id="volume" min="0" max="1" step="0.05">
+      </div>
+      <div class="shortcuts" id="shortcuts"><span><kbd>Space</kbd> press</span><span><kbd>E</kbd> explode</span><span><kbd>C</kbd> cut away</span><span><kbd>R</kbd> rotate</span><span><kbd>1</kbd>–<kbd>4</kbd> views</span><span><kbd>0</kbd> reset</span></div>
+    </section>
+
+    <section>
+      <h2>View</h2>
+      <div class="field">
+        <div class="row"><label for="explode">Explode</label><span class="tag" id="explodeVal">0 mm</span></div>
+        <input type="range" id="explode" min="0" max="1" step="0.01" value="0">
+      </div>
+      <div class="seg" id="views" role="group" aria-label="Camera view"></div>
+      <div class="row">
+        <button class="btn" id="section" type="button" aria-pressed="false">Cut-away section</button>
       </div>
     </section>
 
@@ -117,12 +187,39 @@
       <h2>Light</h2>
       <div class="seg" id="modes" role="group" aria-label="Light mode"></div>
       <div class="swatches" id="glowSw" role="group" aria-label="Light color"></div>
+      <div class="field">
+        <div class="row"><label for="bright">Brightness</label><span class="tag" id="brightVal"></span></div>
+        <input type="range" id="bright" min="0.1" max="1" step="0.05">
+      </div>
+      <div class="field">
+        <div class="row"><label for="speed">Effect speed</label><span class="tag" id="speedVal"></span></div>
+        <input type="range" id="speed" min="0.25" max="3" step="0.05">
+      </div>
     </section>
 
     <section>
-      <h2>Top shell & keycap</h2>
-      <div class="row"><span class="tag" style="width:64px">Shell</span><div class="swatches" id="topSw" role="group" aria-label="Top shell color"></div></div>
-      <div class="row"><span class="tag" style="width:64px">Keycap</span><div class="swatches" id="capSw" role="group" aria-label="Keycap color"></div></div>
+      <h2>Finish</h2>
+      <div class="row"><span class="swlabel">Shell</span><div class="swatches" id="topSw" role="group" aria-label="Top shell color"></div></div>
+      <div class="row"><span class="swlabel">Keycap</span><div class="swatches" id="capSw" role="group" aria-label="Keycap color"></div></div>
+      <div class="row"><span class="swlabel">Diffuser</span><div class="swatches" id="difSw" role="group" aria-label="Diffuser tint"></div></div>
+    </section>
+
+    <section>
+      <h2>Configure &amp; export</h2>
+      <p class="note">Change the build and the model is rebuilt and fit-checked in your browser. Download your own STLs below.</p>
+      <div id="config" style="display:grid;gap:12px"></div>
+      <div class="status" id="buildStatus" role="status" aria-live="polite"></div>
+      <div class="row">
+        <button class="btn small" id="cfgReset" type="button">Reset to defaults</button>
+        <button class="btn small" id="cfgShare" type="button">Copy share link</button>
+        <button class="btn small" id="cfgCopy" type="button">Copy params</button>
+      </div>
+      <table id="print"></table>
+    </section>
+
+    <section>
+      <h2>Power</h2>
+      <div id="power" class="callout"></div>
     </section>
 
     <section>
@@ -140,112 +237,152 @@
       <table id="spec"></table>
     </section>
 
-    <section>
-      <h2>Hardware</h2>
-      <ul>
-        <li>Any MX-compatible switch (3- or 5-pin) and a 1u Cherry-profile keycap</li>
-        <li>Custom 22.4 × 22.4 mm PCB, 1.6 mm thick (footprint below)</li>
-        <li>301020 LiPo pouch (3 × 10 × 20 mm, ≈40 mAh) with a JST-SH 2-pin plug</li>
-        <li>2 × M2×10 screws from below (self-tapping into the upper housing)</li>
-      </ul>
-    </section>
+    <details>
+      <summary><h2>Hardware</h2></summary>
+      <ul id="hardware"></ul>
+    </details>
 
-    <section>
-      <h2>PCB footprint</h2>
+    <details>
+      <summary><h2>PCB footprint</h2></summary>
       <table>
         <tr><td>Kailh MX hot-swap socket</td><td>underside</td></tr>
         <tr><td>USB-C receptacle, overhangs south edge 1.2 mm</td><td>underside</td></tr>
         <tr><td>4 × 2020 addressable LEDs facing the diffuser</td><td>underside</td></tr>
         <tr><td>4 × 2020 LEDs under the halo light pipes</td><td>top</td></tr>
         <tr><td>SK6812MINI-E in the switch LED window</td><td>reverse mount</td></tr>
-        <tr><td>USB MCU (CH32X035 / CH552), LiPo charger, JST-SH</td><td>underside</td></tr>
+        <tr><td>USB MCU (CH32X035 / CH552), power stage, JST-SH</td><td>underside</td></tr>
         <tr><td>Keep-out: parts ≤ 3.4 mm tall below, none on top outside the switch area</td><td></td></tr>
       </table>
-    </section>
+    </details>
 
-    <section>
-      <h2>Circuit</h2>
-      <p class="note" style="margin:0">The LiPo powers the MCU and LEDs at all times through the charger and regulator. The two switch contacts work as a momentary closure between a GPIO with a pull-up and GND, and the firmware turns each press into a lighting effect. USB-C charges the battery and exposes the effect settings to a config tool.</p>
-    </section>
+    <details>
+      <summary><h2>Circuit</h2></summary>
+      <p class="note" id="circuit"></p>
+    </details>
 
-    <section>
-      <h2>Printing</h2>
-      <table id="print"></table>
-    </section>
+    <details>
+      <summary><h2>Printing</h2></summary>
+      <p class="note">No supports needed. Print the diffuser in natural PETG or "transparent" PLA at 100% infill, then lightly sand or bead-blast it for an even frost. Print a test first and tune the plate cutout (13.9–14.1 mm) until the switch clips in firmly.</p>
+    </details>
   </aside>
 </div>
+<div class="toast" id="toast" role="status" aria-live="polite"></div>
 
+<script>
+  // Shown if three.js can't load (offline, blocked CDN) or WebGL is unavailable.
+  setTimeout(() => { if (!window.__ready) { const o = document.getElementById('overlay'); o.hidden = false; o.textContent = 'The 3D preview could not start. It needs WebGL and access to cdn.jsdelivr.net.'; } }, 12000);
+</script>
 <script type="importmap">
 { "imports": {
-  "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
-  "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+  "three": "__THREE_CDN__/build/three.module.js",
+  "three/addons/": "__THREE_CDN__/examples/jsm/"
 } }
 </script>
 <script>/*__MODEL_DATA__*/</script>
+<script>/*__WORKER_SRC__*/</script>
 <script type="module">
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
 import { toCreasedNormals } from 'three/addons/utils/BufferGeometryUtils.js';
 
-const D = window.MODEL, L = D.levels, PR = D.params;
+const D = window.MODEL;
+const DEFAULT_P = D.params;
 const reduceMotion = matchMedia('(prefers-reduced-motion: reduce)').matches;
+const coarse = matchMedia('(pointer: coarse)').matches;
+const $ = (id) => document.getElementById(id);
+const fmt = (v, d = 1) => (+v).toFixed(d);
+
+// Current build: params, levels and cell. Replaced when the configurator rebuilds.
+let PR = { ...DEFAULT_P }, L = { ...D.levels }, CELL = D.cell, CHECKS = D.checks;
+
+// ---------- settings (persisted per viewer; the share link carries them too) ----------
+const STORE = 'mx-fidget:v2';
+const DEFAULT_LOOK = { mode: 'rainbow', color: '#39c6f0', bright: 0.8, speed: 1, top: '#2b2e35', cap: '#2a2c31', dif: '#8e9aa3',
+                       sw: 'linear', sound: true, volume: 0.6, haptic: true, spin: !reduceMotion };
+const CONFIG_KEYS = ['battery', 'keycapBottomAbovePlate', 'collarAbovePlate', 'collarInner', 'plateCut', 'baseSize', 'seg'];
+const DEFAULT_CFG = Object.fromEntries(CONFIG_KEYS.map(k => [k, DEFAULT_P[k]]));
+let saved = {};
+try { saved = JSON.parse(localStorage.getItem(STORE) || '{}') || {}; } catch {}
+const look = { ...DEFAULT_LOOK, ...(saved.look || {}) };
+const cfg = { ...DEFAULT_CFG, ...(saved.cfg || {}) };
+let presses = +saved.presses || 0;
+// share link: #battery=cr1632&color=%23ff4d6d…
+for (const [k, v] of new URLSearchParams(location.hash.slice(1))) {
+  if (k in DEFAULT_CFG) cfg[k] = typeof DEFAULT_CFG[k] === 'number' ? +v : v;
+  else if (k in DEFAULT_LOOK) look[k] = typeof DEFAULT_LOOK[k] === 'number' ? +v : typeof DEFAULT_LOOK[k] === 'boolean' ? v === '1' : v;
+}
+if (!(cfg.battery in D.batteries)) cfg.battery = DEFAULT_CFG.battery;
+let saveTimer = 0;
+function save() {
+  clearTimeout(saveTimer);
+  saveTimer = setTimeout(() => { try { localStorage.setItem(STORE, JSON.stringify({ look, cfg, presses })); } catch {} }, 250);
+}
 
 // ---------- decode meshes ----------
 function b64(s, T) { const bin = atob(s); const u8 = new Uint8Array(bin.length); for (let i = 0; i < bin.length; i++) u8[i] = bin.charCodeAt(i); return new T(u8.buffer); }
-function geometry(key) {
-  const d = D.parts[key];
+function makeGeometry(pos, idx) {
   const g = new THREE.BufferGeometry();
-  g.setAttribute('position', new THREE.BufferAttribute(b64(d.p, Float32Array), 3));
-  g.setIndex(new THREE.BufferAttribute(b64(d.i, d.i32 ? Uint32Array : Uint16Array), 1));
-  return toCreasedNormals(g, THREE.MathUtils.degToRad(32));
+  g.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+  g.setIndex(new THREE.BufferAttribute(idx, 1));
+  const out = toCreasedNormals(g, THREE.MathUtils.degToRad(32));
+  g.dispose();
+  out.computeBoundingSphere(); out.computeBoundingBox();
+  return out;
 }
+const DEFAULT_GEO = {};
+for (const [k, d] of Object.entries(D.parts)) DEFAULT_GEO[k] = makeGeometry(b64(d.p, Float32Array), b64(d.i, d.i32 ? Uint32Array : Uint16Array));
 
 // ---------- renderer / scene ----------
-const canvas = document.getElementById('c');
-const stage = document.getElementById('stage');
-const renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
-renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+const canvas = $('c');
+const stage = $('stage');
+let renderer;
+try {
+  renderer = new THREE.WebGLRenderer({ canvas, antialias: true, powerPreference: 'high-performance' });
+} catch (e) {
+  $('overlay').textContent = 'WebGL is not available in this browser, so the 3D preview cannot run.';
+  throw e;
+}
+const maxDpr = Math.min(devicePixelRatio || 1, 2);
+let dpr = maxDpr;
+renderer.setPixelRatio(dpr);
 renderer.localClippingEnabled = true;
 renderer.toneMapping = THREE.ACESFilmicToneMapping;
 renderer.outputColorSpace = THREE.SRGBColorSpace;
 const scene = new THREE.Scene();
 const pmrem = new THREE.PMREMGenerator(renderer);
 scene.environment = pmrem.fromScene(new RoomEnvironment(renderer), 0.04).texture;
+pmrem.dispose();
 scene.environmentIntensity = 0.55;
 const camera = new THREE.PerspectiveCamera(30, 1, 1, 2000);
 camera.up.set(0, 0, 1);
-camera.position.set(-58, -92, 60);
 const controls = new OrbitControls(camera, canvas);
-controls.target.set(0, 0, 13);
 controls.enableDamping = true;
 controls.minDistance = 30; controls.maxDistance = 300;
-controls.autoRotate = !reduceMotion; controls.autoRotateSpeed = 0.8;
-const key = new THREE.DirectionalLight(0xffffff, 1.4); key.position.set(-60, -80, 140); scene.add(key);
-const rim = new THREE.DirectionalLight(0xffffff, 0.5); rim.position.set(90, 70, 40); scene.add(rim);
+controls.autoRotate = look.spin; controls.autoRotateSpeed = 0.8;
+const keyLight = new THREE.DirectionalLight(0xffffff, 1.4); keyLight.position.set(-60, -80, 140); scene.add(keyLight);
+const rimLight = new THREE.DirectionalLight(0xffffff, 0.5); rimLight.position.set(90, 70, 40); scene.add(rimLight);
 scene.add(new THREE.HemisphereLight(0xffffff, 0x404048, 0.35));
 
 function cssVar(n) { return getComputedStyle(document.documentElement).getPropertyValue(n).trim(); }
-function applyStageColor() { scene.background = new THREE.Color(cssVar('--stage')); }
-applyStageColor();
+function applyStageColor() { scene.background = new THREE.Color(cssVar('--stage')); invalidate(); }
 matchMedia('(prefers-color-scheme: dark)').addEventListener('change', applyStageColor);
 new MutationObserver(applyStageColor).observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] });
 
 // ---------- materials ----------
 const clipPlane = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0);
-const clip = { planes: [] };
+let sectionOn = false;
 const mats = [];
 function mat(opts, physical = false) {
   const m = new (physical ? THREE.MeshPhysicalMaterial : THREE.MeshStandardMaterial)({ side: THREE.DoubleSide, ...opts });
   mats.push(m); return m;
 }
 const M = {
-  top: mat({ color: 0x2b2e35, roughness: 0.62, metalness: 0.0 }),
-  diffuser: mat({ color: 0x8e9aa3, roughness: 0.6, envMapIntensity: 0.25, transparent: true, opacity: 0.7, depthWrite: false, emissive: 0x000000 }, true),
-  drawer: mat({ color: 0x2b2e35, roughness: 0.62 }),
+  top: mat({ color: look.top, roughness: 0.62, metalness: 0.0 }),
+  diffuser: mat({ color: look.dif, roughness: 0.6, envMapIntensity: 0.25, transparent: true, opacity: 0.7, depthWrite: false, emissive: 0x000000 }, true),
   housing: mat({ color: 0x3a3d44, roughness: 0.35, transparent: true, opacity: 0.88 }),
   stem: mat({ color: 0xc8242b, roughness: 0.5 }),
-  keycap: mat({ color: 0x2a2c31, roughness: 0.78 }),
+  keycap: mat({ color: look.cap, roughness: 0.78 }),
   socket: mat({ color: 0x24262a, roughness: 0.6 }),
   pcb: mat({ color: 0x1d3f73, roughness: 0.5 }),
   metal: mat({ color: 0xb9bdc4, roughness: 0.28, metalness: 0.9 }),
@@ -275,67 +412,274 @@ const PARTS = {
 };
 const meshes = {};
 for (const [k, p] of Object.entries(PARTS)) {
-  const m = new THREE.Mesh(geometry(k), M[p.mat]);
+  const m = new THREE.Mesh(DEFAULT_GEO[k], M[p.mat]);
   if (p.order) m.renderOrder = p.order;
+  m.matrixAutoUpdate = false;
   meshes[k] = m; scene.add(m);
 }
 const GROUPS = [
   { label: 'Upper housing', keys: ['upper'], color: () => M.top.color, tag: 'print · opaque' },
-  { label: 'Diffuser', keys: ['diffuser'], color: () => new THREE.Color(0xdfe8ee), tag: 'print · frosted' },
+  { label: 'Diffuser', keys: ['diffuser'], color: () => M.diffuser.color.clone().lerp(new THREE.Color(0xffffff), 0.5), tag: 'print · frosted' },
   { label: 'Switch & keycap', keys: ['switch', 'stem', 'keycap'], color: () => M.keycap.color, tag: 'ref' },
   { label: 'PCB & socket', keys: ['pcb', 'socket', 'usb', 'chips'], color: () => M.pcb.color, tag: 'ref' },
   { label: 'LEDs', keys: ['ledsBottom', 'ledsHalo'], color: () => new THREE.Color(0xffffff), tag: 'ref' },
-  { label: 'LiPo battery', keys: ['battery', 'battTab'], color: () => M.cell.color, tag: 'ref' },
+  { label: 'Battery', keys: ['battery', 'battTab'], color: () => M.cell.color, tag: 'ref' },
   { label: 'M2 screws', keys: ['screws'], color: () => M.screw.color, tag: 'ref' },
 ];
 
 // ---------- glow lights ----------
 const glowLights = [];
-function addLight(x, y, z, dist, k) { const l = new THREE.PointLight(0xffffff, 0, dist, 1.6); l.position.set(x, y, z); l.userData.k = k; scene.add(l); glowLights.push(l); }
-for (const [x, y] of PR.ledsBottom) addLight(x * 0.7, y * 0.7, L.Zb - 3, 26, 'body');
-addLight(PR.ledPos[0], PR.ledPos[1], L.Zpcb + 3, 14, 'switch');
-for (const sx of [-1, 1]) for (const sy of [-1, 1]) addLight(sx * PR.haloPos, sy * PR.haloPos, L.Zpt + 0.8, 8, 'well');
+function addLight(kind, dist) { const l = new THREE.PointLight(0xffffff, 0, dist, 1.6); l.userData.k = kind; scene.add(l); glowLights.push(l); return l; }
+for (let i = 0; i < DEFAULT_P.ledsBottom.length; i++) addLight('body', 26);
+addLight('switch', 14);
+for (let i = 0; i < 4; i++) addLight('well', 8);
+function placeLights() {
+  let b = 0, w = 0;
+  for (const l of glowLights) {
+    if (l.userData.k === 'body') { const [x, y] = PR.ledsBottom[b++]; l.position.set(x * 0.7, y * 0.7, L.Zb - 3); }
+    else if (l.userData.k === 'switch') l.position.set(PR.ledPos[0], PR.ledPos[1], L.Zpcb + 3);
+    else { const sx = w & 1 ? 1 : -1, sy = w & 2 ? 1 : -1; w++; l.position.set(sx * PR.haloPos, sy * PR.haloPos, L.Zpt + 0.8); }
+    l.userData.base = l.position.clone();
+    l.userData.angle = Math.atan2(l.position.y, l.position.x);
+  }
+}
+placeLights();
 
 // ---------- state ----------
-const state = { explode: 0, explodeTarget: 0, press: 0, pressTarget: 0, mode: 'rainbow', color: '#39c6f0', flash: 0, t0: performance.now() / 1000 - 9 };
+const state = { explode: 0, explodeTarget: 0, press: 0, pressTarget: 0, flash: 0, t: 9 };
 const EXPLODE_MM = 9;
-const MODES = [['off', 'Off'], ['static', 'Static'], ['breathe', 'Breathe'], ['rainbow', 'Rainbow'], ['reactive', 'Reactive']];
-const GLOW_COLORS = ['#39c6f0', '#9b5cff', '#ff4d6d', '#ffb238', '#57e389', '#ffffff'];
+const MODES = [['off', 'Off'], ['static', 'Static'], ['breathe', 'Breathe'], ['rainbow', 'Rainbow'], ['spin', 'Spin'], ['reactive', 'Reactive']];
+const GLOW_COLORS = [['#39c6f0', 'Ice'], ['#9b5cff', 'Violet'], ['#ff4d6d', 'Rose'], ['#ffb238', 'Amber'], ['#57e389', 'Mint'], ['#ffffff', 'White']];
 const TOP_COLORS = [['#2b2e35', 'Graphite'], ['#ebe7dd', 'Bone'], ['#d9542b', 'Signal orange'], ['#2f6f73', 'Teal'], ['#7d5cc6', 'Lilac']];
 const CAP_COLORS = [['#2a2c31', 'Black'], ['#e9e6dc', 'Cream PBT'], ['#d9542b', 'Orange'], ['#8fb8de', 'Sky'], ['#f2d36b', 'Butter']];
+const DIF_COLORS = [['#8e9aa3', 'Natural'], ['#d8dde2', 'Milky'], ['#5c6670', 'Smoke'], ['#7fb0d6', 'Ice'], ['#d6a0b8', 'Blush']];
+const SWITCHES = [['linear', 'Linear', '#c8242b'], ['tactile', 'Tactile', '#7a4b2a'], ['clicky', 'Clicky', '#2a6fd6'], ['silent', 'Silent', '#3a3d44']];
+const VIEWS = [['iso', 'Iso', [-58, -92, 60]], ['top', 'Top', [0, -0.01, 125]], ['front', 'Front', [0, -120, 14]], ['side', 'Side', [120, 0, 14]]];
 
-// ---------- UI ----------
-const $ = (id) => document.getElementById(id);
+// ---------- render on demand ----------
+// The loop only runs while something moves (orbit damping, auto-rotate, tweens, animated light);
+// otherwise the page renders nothing and costs no GPU time.
+let running = false, needsRender = true, onScreen = true, last = performance.now();
+function invalidate() {
+  needsRender = true;
+  if (!running && onScreen && !document.hidden) { running = true; last = performance.now(); requestAnimationFrame(frame); }
+}
+new IntersectionObserver(([e]) => { onScreen = e.isIntersecting; if (onScreen) invalidate(); }).observe(stage);
+document.addEventListener('visibilitychange', () => { if (!document.hidden) invalidate(); });
+controls.addEventListener('change', invalidate);
+
+// ---------- audio ----------
+// Synthesised switch sounds (no samples to download). The context starts on the first press.
+let actx = null, master = null, noiseBuf = null;
+function audio() {
+  if (!look.sound || look.volume <= 0) return null;
+  if (!actx) {
+    const AC = window.AudioContext || window.webkitAudioContext;
+    if (!AC) return null;
+    actx = new AC();
+    master = actx.createGain(); master.connect(actx.destination);
+    noiseBuf = actx.createBuffer(1, actx.sampleRate * 0.25, actx.sampleRate);
+    const d = noiseBuf.getChannelData(0); for (let i = 0; i < d.length; i++) d[i] = Math.random() * 2 - 1;
+  }
+  if (actx.state === 'suspended') actx.resume();
+  master.gain.value = look.volume * look.volume;
+  return actx;
+}
+function burst(ac, t, { freq, q = 1, type = 'bandpass', gain = 1, decay = 0.03 }) {
+  const src = ac.createBufferSource(); src.buffer = noiseBuf; src.playbackRate.value = 0.9 + Math.random() * 0.2;
+  const f = ac.createBiquadFilter(); f.type = type; f.frequency.value = freq * (0.94 + Math.random() * 0.12); f.Q.value = q;
+  const g = ac.createGain(); g.gain.setValueAtTime(gain, t); g.gain.exponentialRampToValueAtTime(0.0001, t + decay);
+  src.connect(f).connect(g).connect(master); src.start(t); src.stop(t + decay + 0.02);
+}
+function tone(ac, t, { freq, gain = 0.5, decay = 0.05 }) {
+  const o = ac.createOscillator(); o.type = 'sine'; o.frequency.setValueAtTime(freq, t); o.frequency.exponentialRampToValueAtTime(freq * 0.6, t + decay);
+  const g = ac.createGain(); g.gain.setValueAtTime(gain, t); g.gain.exponentialRampToValueAtTime(0.0001, t + decay);
+  o.connect(g).connect(master); o.start(t); o.stop(t + decay + 0.02);
+}
+function playSwitch(down) {
+  const ac = audio(); if (!ac) return;
+  const t = ac.currentTime + 0.005;
+  const sw = look.sw;
+  if (down) {
+    if (sw === 'clicky') burst(ac, t, { freq: 4200, q: 3, gain: 1.4, decay: 0.018 });
+    if (sw === 'tactile') burst(ac, t, { freq: 1500, q: 1.2, gain: 0.35, decay: 0.012 });
+    const bt = t + (sw === 'clicky' ? 0.022 : 0.03);
+    if (sw === 'silent') { burst(ac, bt, { freq: 600, type: 'lowpass', gain: 0.35, decay: 0.03 }); tone(ac, bt, { freq: 140, gain: 0.25, decay: 0.05 }); }
+    else { burst(ac, bt, { freq: 1100, q: 0.8, gain: 0.9, decay: 0.035 }); tone(ac, bt, { freq: 190, gain: 0.55, decay: 0.07 }); }
+  } else {
+    if (sw === 'clicky') burst(ac, t, { freq: 3600, q: 3, gain: 0.8, decay: 0.014 });
+    burst(ac, t + 0.01, { freq: sw === 'silent' ? 500 : 1600, q: 0.9, gain: sw === 'silent' ? 0.12 : 0.4, decay: 0.025 });
+  }
+}
+const canVibrate = 'vibrate' in navigator && coarse;
+
+// ---------- pressing ----------
+let downSources = 0;
+function pressDown() {
+  if (downSources++ > 0) return;
+  state.pressTarget = 1; state.flash = 1;
+  presses++; renderCount(); save();
+  playSwitch(true);
+  if (canVibrate && look.haptic) navigator.vibrate(look.sw === 'clicky' ? [6, 20, 6] : 8);
+  invalidate();
+}
+function pressUp(all = false) {
+  if (downSources === 0) return;
+  downSources = all ? 0 : downSources - 1;
+  if (downSources > 0) return;
+  state.pressTarget = 0;
+  playSwitch(false);
+  invalidate();
+}
+function renderCount() {
+  $('count').textContent = presses.toLocaleString();
+  if (!reduceMotion) { const c = $('counter'); c.classList.remove('bump'); void c.offsetWidth; c.classList.add('bump'); }
+}
+$('count').textContent = presses.toLocaleString();
+
+// ---------- UI helpers ----------
 function pressedBtn(el, on) { el.setAttribute('aria-pressed', on ? 'true' : 'false'); }
-const modesEl = $('modes');
-for (const [id, label] of MODES) {
-  const b = document.createElement('button'); b.className = 'btn'; b.type = 'button'; b.id = 'mode-' + id; b.textContent = label;
-  b.addEventListener('click', () => { state.mode = id; syncModes(); });
-  modesEl.appendChild(b);
-}
-function syncModes() { for (const [id] of MODES) pressedBtn($('mode-' + id), state.mode === id); }
-syncModes();
-function swatches(el, list, current, onPick, idPrefix) {
+let toastTimer = 0;
+function toast(msg) { const t = $('toast'); t.textContent = msg; t.classList.add('show'); clearTimeout(toastTimer); toastTimer = setTimeout(() => t.classList.remove('show'), 1800); }
+function segmented(el, list, current, onPick, idPrefix) {
   el.innerHTML = '';
-  list.forEach((entry, i) => {
-    const [hex, name] = Array.isArray(entry) ? entry : [entry, entry];
-    const b = document.createElement('button'); b.className = 'sw'; b.type = 'button'; b.id = idPrefix + i;
-    b.style.background = hex; b.title = name; b.setAttribute('aria-label', name);
-    pressedBtn(b, hex === current);
-    b.addEventListener('click', () => { [...el.children].forEach(c => pressedBtn(c, c === b)); onPick(hex); });
+  for (const [id, label] of list) {
+    const b = document.createElement('button'); b.className = 'btn small'; b.type = 'button'; b.id = idPrefix + id; b.textContent = label;
+    b.addEventListener('click', () => { onPick(id); sync(); });
     el.appendChild(b);
-  });
+  }
+  const sync = (cur = current()) => { for (const [id] of list) pressedBtn($(idPrefix + id), cur === id); };
+  sync();
+  return sync;
 }
-swatches($('glowSw'), GLOW_COLORS, state.color, (h) => { state.color = h; if (state.mode === 'off' || state.mode === 'rainbow') state.mode = 'static'; syncModes(); }, 'glow');
-swatches($('topSw'), TOP_COLORS, TOP_COLORS[0][0], (h) => { M.top.color.set(h); refreshDots(); }, 'top');
-swatches($('capSw'), CAP_COLORS, CAP_COLORS[0][0], (h) => { M.keycap.color.set(h); refreshDots(); }, 'cap');
+// Preset swatches plus a free colour picker. Returns a sync function.
+function swatches(el, list, get, set, idPrefix) {
+  el.innerHTML = '';
+  const btns = list.map(([hex, name], i) => {
+    const b = document.createElement('button'); b.className = 'sw'; b.type = 'button'; b.id = idPrefix + i;
+    b.style.background = hex; b.title = name; b.setAttribute('aria-label', name); b.dataset.hex = hex;
+    b.addEventListener('click', () => { set(hex); sync(); });
+    el.appendChild(b); return b;
+  });
+  const wrap = document.createElement('label'); wrap.className = 'picker'; wrap.title = 'Custom colour';
+  const inp = document.createElement('input'); inp.type = 'color'; inp.setAttribute('aria-label', 'Custom colour'); inp.id = idPrefix + 'custom';
+  inp.addEventListener('input', () => { set(inp.value); sync(); });
+  wrap.appendChild(inp); el.appendChild(wrap);
+  function sync() {
+    const cur = get().toLowerCase();
+    let preset = false;
+    for (const b of btns) { const on = b.dataset.hex === cur; preset ||= on; pressedBtn(b, on); }
+    pressedBtn(wrap, !preset); inp.value = cur;
+    if (!preset) wrap.style.background = cur; else wrap.style.removeProperty('background');
+  }
+  sync();
+  return sync;
+}
+function slider(id, key, fmtVal, onChange) {
+  const el = $(id), out = $(id + 'Val');
+  el.value = look[key]; out.textContent = fmtVal(look[key]);
+  el.addEventListener('input', () => { look[key] = +el.value; out.textContent = fmtVal(look[key]); onChange?.(); save(); invalidate(); });
+}
 
+// ---------- Play / View controls ----------
+const syncSwitch = segmented($('switchType'), SWITCHES.map(([id, l]) => [id, l]), () => look.sw, (id) => {
+  look.sw = id; applySwitch(); save(); playSwitch(true); setTimeout(() => playSwitch(false), 110);
+}, 'sw-');
+function applySwitch() { M.stem.color.set(SWITCHES.find(s => s[0] === look.sw)[2]); invalidate(); }
+applySwitch();
+$('sound').addEventListener('click', () => { look.sound = !look.sound; pressedBtn($('sound'), look.sound); save(); });
+pressedBtn($('sound'), look.sound);
+if (canVibrate) {
+  $('haptic').hidden = false; pressedBtn($('haptic'), look.haptic);
+  $('haptic').addEventListener('click', () => { look.haptic = !look.haptic; pressedBtn($('haptic'), look.haptic); save(); });
+}
+slider('volume', 'volume', (v) => `${Math.round(v * 100)}%`);
+
+const syncViews = segmented($('views'), VIEWS.map(([id, l]) => [id, l]), () => null, (id) => goView(id), 'view-');
+let camAnim = null;
+function viewPose(id) {
+  const v = VIEWS.find(x => x[0] === id) || VIEWS[0];
+  const target = new THREE.Vector3(0, 0, L.Ztop * 0.6);
+  const to = new THREE.Vector3(...v[2]).multiplyScalar(1 + 0.9 * state.explode).add(new THREE.Vector3(0, 0, target.z - 13));
+  return { to, target };
+}
+function goView(id) {
+  const { to, target } = viewPose(id);
+  setSpin(false);
+  if (reduceMotion) { camera.position.copy(to); controls.target.copy(target); controls.update(); invalidate(); return; }
+  camAnim = { t: 0, fromP: camera.position.clone(), toP: to, fromT: controls.target.clone(), toT: target };
+  invalidate();
+}
+function setSpin(on) { controls.autoRotate = on; look.spin = on; pressedBtn($('spin'), on); save(); invalidate(); }
+$('spin').addEventListener('click', () => setSpin(!controls.autoRotate));
+pressedBtn($('spin'), controls.autoRotate);
+
+const explodeEl = $('explode');
+function setExplode(v) { state.explodeTarget = v; explodeEl.value = v; pressedBtn($('qExplode'), v > 0.5); invalidate(); }
+explodeEl.addEventListener('input', () => setExplode(+explodeEl.value));
+$('qExplode').addEventListener('click', () => setExplode(state.explodeTarget > 0.5 ? 0 : 1));
+function setSection(on) {
+  sectionOn = on;
+  const planes = on ? [clipPlane] : [];
+  for (const m of mats) { m.clippingPlanes = planes; m.needsUpdate = true; }
+  pressedBtn($('section'), on); pressedBtn($('qSection'), on);
+  invalidate();
+}
+$('section').addEventListener('click', () => setSection(!sectionOn));
+$('qSection').addEventListener('click', () => setSection(!sectionOn));
+$('qReset').addEventListener('click', () => goView('iso'));
+
+// Press button: pointer, keyboard, and releasing anywhere.
+const pressBtn = $('press');
+pressBtn.addEventListener('pointerdown', (e) => { e.preventDefault(); pressBtn.setPointerCapture(e.pointerId); pressDown(); });
+pressBtn.addEventListener('pointerup', () => pressUp());
+pressBtn.addEventListener('pointercancel', () => pressUp());
+pressBtn.addEventListener('contextmenu', (e) => e.preventDefault());
+pressBtn.addEventListener('keydown', (e) => { if ((e.key === ' ' || e.key === 'Enter') && !e.repeat) { e.preventDefault(); pressDown(); } });
+pressBtn.addEventListener('keyup', (e) => { if (e.key === ' ' || e.key === 'Enter') pressUp(); });
+addEventListener('blur', () => pressUp(true));
+
+// Global shortcuts (ignored while typing in a form control).
+const keysDown = new Set();
+addEventListener('keydown', (e) => {
+  if (e.ctrlKey || e.metaKey || e.altKey) return;
+  const tag = e.target.tagName;
+  if (e.target === pressBtn || ['INPUT', 'SELECT', 'TEXTAREA'].includes(tag)) return;
+  const k = e.key.toLowerCase();
+  if (k === ' ' || k === 'k') {
+    if (tag === 'BUTTON' && k === ' ') return; // let buttons activate normally
+    e.preventDefault();
+    if (!keysDown.has(k)) { keysDown.add(k); pressDown(); }
+    return;
+  }
+  if (e.repeat) return;
+  if (k === 'e') setExplode(state.explodeTarget > 0.5 ? 0 : 1);
+  else if (k === 'c') setSection(!sectionOn);
+  else if (k === 'r') setSpin(!controls.autoRotate);
+  else if (k === '0') goView('iso');
+  else if ('1234'.includes(k)) goView(VIEWS[+k - 1][0]);
+});
+addEventListener('keyup', (e) => { const k = e.key.toLowerCase(); if (keysDown.delete(k)) pressUp(); });
+
+// ---------- Light / finish ----------
+const syncModes = segmented($('modes'), MODES, () => look.mode, (id) => { look.mode = id; save(); invalidate(); }, 'mode-');
+swatches($('glowSw'), GLOW_COLORS, () => look.color, (h) => {
+  look.color = h; if (look.mode === 'off' || look.mode === 'rainbow') { look.mode = 'static'; syncModes(); }
+  save(); invalidate();
+}, 'glow');
+slider('bright', 'bright', (v) => `${Math.round(v * 100)}%`);
+slider('speed', 'speed', (v) => `${fmt(v, 2)}×`);
+swatches($('topSw'), TOP_COLORS, () => look.top, (h) => { look.top = h; M.top.color.set(h); refreshDots(); save(); invalidate(); }, 'top');
+swatches($('capSw'), CAP_COLORS, () => look.cap, (h) => { look.cap = h; M.keycap.color.set(h); refreshDots(); save(); invalidate(); }, 'cap');
+swatches($('difSw'), DIF_COLORS, () => look.dif, (h) => { look.dif = h; M.diffuser.color.set(h); refreshDots(); save(); invalidate(); }, 'dif');
+
+// ---------- Parts ----------
 const partsEl = $('parts');
 const dots = [];
 GROUPS.forEach((g, i) => {
   const row = document.createElement('label'); row.className = 'part';
   const cb = document.createElement('input'); cb.type = 'checkbox'; cb.checked = true; cb.id = 'part' + i;
-  cb.addEventListener('change', () => g.keys.forEach(k => meshes[k].visible = cb.checked));
+  cb.addEventListener('change', () => { g.keys.forEach(k => meshes[k].visible = cb.checked); invalidate(); });
   const dot = document.createElement('span'); dot.className = 'dot'; dots.push([dot, g]);
   const name = document.createElement('span'); name.textContent = g.label;
   const tag = document.createElement('span'); tag.className = 'tag'; tag.textContent = g.tag;
@@ -344,123 +688,334 @@ GROUPS.forEach((g, i) => {
 function refreshDots() { for (const [d, g] of dots) d.style.background = '#' + g.color().getHexString(); }
 refreshDots();
 
-const explodeEl = $('explode');
-explodeEl.addEventListener('input', () => { state.explodeTarget = +explodeEl.value; });
-$('qAssembled').addEventListener('click', () => { state.explodeTarget = 0; explodeEl.value = 0; });
-$('qExploded').addEventListener('click', () => { state.explodeTarget = 1; explodeEl.value = 1; });
-function setSection(on) {
-  clip.planes = on ? [clipPlane] : [];
-  for (const m of mats) { m.clippingPlanes = clip.planes; m.needsUpdate = true; }
-  pressedBtn($('section'), on); pressedBtn($('qSection'), on);
-}
-$('section').addEventListener('click', () => setSection(!clip.planes.length));
-$('qSection').addEventListener('click', () => setSection(!clip.planes.length));
-$('spin').addEventListener('click', () => { controls.autoRotate = !controls.autoRotate; pressedBtn($('spin'), controls.autoRotate); });
-pressedBtn($('spin'), controls.autoRotate);
-
-function pressDown() { state.pressTarget = 1; state.flash = 1; }
-function pressUp() { state.pressTarget = 0; }
-$('press').addEventListener('pointerdown', pressDown);
-$('press').addEventListener('pointerup', pressUp);
-$('press').addEventListener('pointerleave', pressUp);
-$('press').addEventListener('keydown', (e) => { if (e.key === ' ' || e.key === 'Enter') { e.preventDefault(); pressDown(); } });
-$('press').addEventListener('keyup', (e) => { if (e.key === ' ' || e.key === 'Enter') pressUp(); });
-
-// press by clicking the keycap in the 3D view
+// ---------- press by clicking / tapping the keycap ----------
 const ray = new THREE.Raycaster(), ndc = new THREE.Vector2();
+const visibleOnSide = (h) => !sectionOn || clipPlane.distanceToPoint(h.point) >= 0;
+// Only the keycap and stem are tested first; the housing is checked as an occluder up to that distance.
 function hitKeycap(ev) {
   const r = canvas.getBoundingClientRect();
   ndc.set(((ev.clientX - r.left) / r.width) * 2 - 1, -((ev.clientY - r.top) / r.height) * 2 + 1);
   ray.setFromCamera(ndc, camera);
-  const hits = ray.intersectObjects(Object.values(meshes).filter(m => m.visible), false);
-  const h = hits.find(h => !clip.planes.length || clipPlane.distanceToPoint(h.point) >= 0);
-  return h && (h.object === meshes.keycap || h.object === meshes.stem);
+  const cap = [meshes.keycap, meshes.stem].filter(m => m.visible);
+  const hit = ray.intersectObjects(cap, false).find(visibleOnSide);
+  if (!hit) return false;
+  ray.far = hit.distance;
+  const occ = ray.intersectObjects([meshes.upper, meshes.switch].filter(m => m.visible), false).some(visibleOnSide);
+  ray.far = Infinity;
+  return !occ;
 }
+const canvasPointers = new Set();
 canvas.addEventListener('pointerdown', (ev) => {
-  controls.autoRotate = false; pressedBtn($('spin'), false);
-  if (hitKeycap(ev)) { controls.enabled = false; pressDown(); canvas.setPointerCapture(ev.pointerId); }
+  if (controls.autoRotate) setSpin(false);
+  camAnim = null;
+  if (ev.button === 0 && hitKeycap(ev)) {
+    controls.enabled = false; canvasPointers.add(ev.pointerId); canvas.setPointerCapture(ev.pointerId); pressDown();
+  }
 }, { capture: true });
-canvas.addEventListener('pointerup', () => { if (state.pressTarget) { pressUp(); controls.enabled = true; } });
-canvas.addEventListener('pointermove', (ev) => { if (ev.buttons === 0) canvas.classList.toggle('pressable', !!hitKeycap(ev)); });
+const canvasRelease = (ev) => { if (canvasPointers.delete(ev.pointerId)) { pressUp(); if (!canvasPointers.size) controls.enabled = true; } };
+canvas.addEventListener('pointerup', canvasRelease);
+canvas.addEventListener('pointercancel', canvasRelease);
+// Hover feedback, at most one raycast per animation frame.
+let hoverEv = null;
+canvas.addEventListener('pointermove', (ev) => {
+  if (ev.buttons !== 0 || ev.pointerType !== 'mouse') return;
+  if (!hoverEv) requestAnimationFrame(() => { canvas.classList.toggle('pressable', hitKeycap(hoverEv)); hoverEv = null; });
+  hoverEv = ev;
+});
+canvas.addEventListener('dblclick', () => goView('iso'));
+$('hint').textContent = coarse ? 'Drag to orbit · pinch to zoom · tap and hold the keycap'
+                               : 'Drag to orbit · scroll to zoom · click and hold the keycap, or hold Space';
 
-// ---------- info panels ----------
-const fmt = (v) => v.toFixed(1);
-$('dims').textContent = `${PR.baseSize} × ${PR.baseSize} × ${fmt(L.Ztop)} mm · 2 printed parts`;
-const spec = [
-  ['Footprint at base · at collar', `${PR.baseSize} · ${fmt(PR.collarInner + 2.8)} mm`],
-  ['Height to collar rim / keycap top', `${fmt(L.Ztop)} / ≈${fmt(L.Zpt + PR.keycapBottomAbovePlate + PR.keycapH)} mm`],
-  ['Plate cutout · thickness', `${PR.plateCut.toFixed(1)} · 1.5 mm`],
-  ['Collar opening · height above plate', `${fmt(PR.collarInner)} · ${fmt(PR.collarAbovePlate)} mm`],
-  ['Skirt hidden by the collar', `≈${fmt(PR.collarAbovePlate - PR.keycapBottomAbovePlate)} mm`],
-  ['Keycap side clearance', `${D.checks.keycapGap.toFixed(2)} mm`],
-  ['Travel', `${fmt(PR.travel)} mm, unobstructed`],
-  ['Part interference', `<span class="ok">${D.checks.clean ? 'none' : 'check'}</span> · ${D.checks.pairs} pairs`],
-];
-$('spec').innerHTML = spec.map(([a, b]) => `<tr><td>${a}</td><td>${b}</td></tr>`).join('');
-const prints = [
-  ['upper_housing.stl', 'opaque · upright'],
-  ['diffuser.stl', 'frosted · upright'],
-];
-const stlBase = 'stl/'; // index.html sits at the repo root, next to stl/
-$('print').innerHTML = prints.map(([a, b]) => `<tr><td><a href="${stlBase}${a}" download><code>${a}</code></a></td><td>${b}</td></tr>`).join('') +
-  `<tr><td colspan="2" class="note" style="text-align:left;font-family:var(--font-body)">No supports needed. Print the diffuser in natural PETG or "transparent" PLA at 100% infill, then lightly sand or bead-blast it for an even frost.</td></tr>`;
+// ---------- info panels (rebuilt with the model) ----------
+function renderInfo() {
+  const cap = L.Zpt + PR.keycapBottomAbovePlate + PR.keycapH;
+  $('dims').textContent = `${fmt(PR.baseSize)} × ${fmt(PR.baseSize)} × ${fmt(L.Ztop)} mm · 2 printed parts`;
+  const hidden = PR.collarAbovePlate - PR.keycapBottomAbovePlate;
+  const spec = [
+    ['Footprint at base · at collar', `${fmt(PR.baseSize)} · ${fmt(PR.collarInner + 2 * PR.collarWall)} mm`],
+    ['Height to collar rim / keycap top', `${fmt(L.Ztop)} / ≈${fmt(cap)} mm`],
+    ['Plate cutout · thickness', `${fmt(PR.plateCut, 2)} · ${fmt(PR.plateThk)} mm`],
+    ['Collar opening · height above plate', `${fmt(PR.collarInner)} · ${fmt(PR.collarAbovePlate)} mm`],
+    [hidden >= 0 ? 'Skirt hidden by the collar' : 'Gap visible under the collar', `${hidden >= 0 ? '≈' : ''}${fmt(Math.abs(hidden))} mm`],
+    ['Keycap side clearance', `${fmt(CHECKS.keycapGap, 2)} mm`],
+    ['Wall around the PCB', `${fmt(CHECKS.pcbWall, 2)} mm`],
+    ['Travel', `${fmt(PR.travel)} mm, unobstructed`],
+    ['Part interference', CHECKS.clean ? `<span class="ok">none</span> · ${CHECKS.pairs} pairs` : `<span class="bad">${CHECKS.problems.length} problem${CHECKS.problems.length > 1 ? 's' : ''}</span>`],
+  ];
+  $('spec').innerHTML = spec.map(([a, b]) => `<tr><td>${a}</td><td>${b}</td></tr>`).join('');
 
-const stackEl = $('stack');
-const layers = [
-  ['Diffuser', 0, L.Zb, '#cfe3ec', 'battery, LEDs, USB-C'],
-  ['PCB', L.Zb, L.Zpcb, '#1d3f73', 'socket underneath'],
-  ['Switch', L.Zpcb, L.Zpt, '#3a3e47', 'plate at top'],
-  ['Collar', L.Zpt, L.Ztop, '#2b2e35', 'hides the skirt'],
+  const layers = [
+    ['Diffuser', 0, L.Zb, '#cfe3ec', 'battery, LEDs, USB-C'],
+    ['PCB', L.Zb, L.Zpcb, '#1d3f73', 'socket underneath'],
+    ['Switch', L.Zpcb, L.Zpt, '#3a3e47', 'plate at top'],
+    ['Collar', L.Zpt, L.Ztop, '#2b2e35', 'hides the skirt'],
+  ];
+  const H = 150;
+  $('stack').innerHTML =
+    `<div class="stackbar" style="height:${H}px">${layers.map(([, a, b, c]) =>
+      `<div style="height:${((b - a) / L.Ztop) * 100}%;background:${c};color:${/^#[123]/.test(c) ? '#e8eaee' : '#1a1c20'}">${fmt(b - a)}</div>`).join('')}</div>` +
+    `<div class="stacklist" style="height:${H}px">${layers.map(([n, a, b, , d]) => `<div>${n} <span>${fmt(a)}–${fmt(b)}</span><br><span>${d}</span></div>`).join('')}</div>`;
+
+  const c = CELL;
+  const size = c.kind === 'pouch' ? `${c.size[2]} × ${c.size[0]} × ${c.size[1]} mm pouch` : `Ø${c.d} × ${c.h} mm coin, tabbed`;
+  const heightDelta = L.Ztop - D.levels.Ztop;
+  const notes = [];
+  if (c.rechargeable) {
+    notes.push(`Rechargeable over USB-C. Set the charger to about ${Math.max(10, Math.round(c.mAh * 0.5 / 5) * 5)} mA (0.5 C).`);
+    notes.push('Runs everything directly, like the stock design: roughly an hour or two of continuous light, or weeks of Reactive flashes.');
+  } else {
+    notes.push('<b>Primary cell. Never charge it.</b> Leave the charger off the board. USB-C can still power the MCU for configuration through a diode or power-path switch.');
+    notes.push('3 V is below what the SK6812 LEDs need (about 3.5–3.7 V), so add a small boost converter. Add a load switch too, so the LEDs\' ~1 mA idle draw each is cut between flashes.');
+    notes.push('The cell sags under 20+ mA, so keep brightness low and use Reactive mode with a 100–220 µF reservoir cap. That gives on the order of 10⁴ short flashes. Continuous effects drain it in hours.');
+  }
+  if (c.kind === 'coin' && c.cy) notes.push(`Cradle sits ${c.cy} mm north of centre to clear the screw posts.`);
+  if (Math.abs(heightDelta) >= 0.05) notes.push(`Changes the total height by ${heightDelta > 0 ? '+' : ''}${fmt(heightDelta)} mm.`);
+  $('power').innerHTML = `<div><b>${c.label}</b><br><span class="tag">${size} · ${c.volts} V · ≈${c.mAh} mAh · ${c.rechargeable ? 'rechargeable' : 'primary'}</span></div><ul>${notes.map(n => `<li>${n}</li>`).join('')}</ul>`;
+
+  $('hardware').innerHTML = [
+    'Any MX-compatible switch (3- or 5-pin) and a 1u Cherry-profile keycap',
+    `Custom ${PR.pcbSize} × ${PR.pcbSize} mm PCB, ${PR.pcbThk} mm thick (footprint below)`,
+    `${c.label} (${size}, ≈${c.mAh} mAh) on a JST-SH 2-pin plug`,
+    '2 × M2×10 screws from below (self-tapping into the upper housing)',
+  ].map(s => `<li>${s}</li>`).join('');
+  $('circuit').textContent = c.rechargeable
+    ? 'The cell powers the MCU and LEDs at all times through the charger and regulator. The two switch contacts work as a momentary closure between a GPIO with a pull-up and GND, and the firmware turns each press into a lighting effect. USB-C charges the battery and exposes the effect settings to a config tool.'
+    : 'With a primary coin cell, drop the charger. The cell feeds the MCU directly and the LEDs through a boost converter behind a load switch, and the MCU sleeps between presses. The switch is a momentary closure between a GPIO with a pull-up (wake-on-press) and GND. USB-C powers the board for configuration only.';
+}
+
+// ---------- configurator ----------
+const CONFIG = [
+  { key: 'battery', label: 'Battery', type: 'select', options: Object.entries(D.batteries).map(([k, b]) => [k, `${b.label} · ${b.mAh} mAh`]) },
+  { key: 'keycapBottomAbovePlate', label: 'Keycap skirt above plate', min: 4, max: 9, step: 0.1, unit: 'mm', help: 'Measure your keycap at rest, from plate top to skirt bottom.' },
+  { key: 'collarAbovePlate', label: 'Collar height above plate', min: 5, max: 11, step: 0.1, unit: 'mm', help: 'About 1 mm above the skirt hides the gap. Taller hides more of the keycap.' },
+  { key: 'collarInner', label: 'Collar opening', min: 18.6, max: 21, step: 0.1, unit: 'mm', help: 'A Cherry 1u skirt is 18.0–18.3 mm. Wider means looser.' },
+  { key: 'plateCut', label: 'Plate cutout', min: 13.8, max: 14.2, step: 0.05, unit: 'mm', digits: 2, help: 'Tune to your printer until the switch clips in firmly.' },
+  { key: 'baseSize', label: 'Footprint', min: 26, max: 32, step: 0.5, unit: 'mm' },
+  { key: 'seg', label: 'Curve quality', type: 'select', options: [[32, 'Draft (fast)'], [64, 'Standard'], [128, 'Fine (slower)']] },
 ];
-const total = L.Ztop, H = 150;
-stackEl.innerHTML =
-  `<div class="stackbar" style="height:${H}px">${layers.map(([n, a, b, c]) =>
-    `<div style="height:${((b - a) / total) * 100}%;background:${c};color:${c.startsWith('#3') || c.startsWith('#2') || c.startsWith('#1') ? '#e8eaee' : '#1a1c20'}">${fmt(b - a)}</div>`).join('')}</div>` +
-  `<div class="stacklist" style="height:${H}px">${layers.map(([n, a, b, , d]) => `<div>${n} <span>${fmt(a)}–${fmt(b)}</span><br><span>${d}</span></div>`).join('')}</div>`;
+const cfgEl = $('config');
+for (const c of CONFIG) {
+  const f = document.createElement('div'); f.className = 'field';
+  const id = 'cfg-' + c.key;
+  if (c.type === 'select') {
+    f.innerHTML = `<div class="row"><label for="${id}">${c.label}</label></div><select id="${id}">${c.options.map(([v, l]) => `<option value="${v}">${l}</option>`).join('')}</select>`;
+  } else {
+    f.innerHTML = `<div class="row"><label for="${id}">${c.label}</label><span class="tag" id="${id}-val"></span></div>` +
+      `<input type="range" id="${id}" min="${c.min}" max="${c.max}" step="${c.step}">` + (c.help ? `<small>${c.help}</small>` : '');
+  }
+  cfgEl.appendChild(f);
+  const inp = f.querySelector(c.type === 'select' ? 'select' : 'input');
+  inp.addEventListener(c.type === 'select' ? 'change' : 'input', () => {
+    cfg[c.key] = c.type === 'select' && c.key === 'battery' ? inp.value : +inp.value;
+    syncConfigInputs(); save(); scheduleRebuild(c.type === 'select' ? 0 : 280);
+  });
+}
+function syncConfigInputs() {
+  for (const c of CONFIG) {
+    const inp = $('cfg-' + c.key); inp.value = cfg[c.key];
+    if (c.type !== 'select') {
+      const d = DEFAULT_CFG[c.key], v = cfg[c.key];
+      $('cfg-' + c.key + '-val').textContent = `${fmt(v, c.digits || 1)} ${c.unit}${Math.abs(v - d) > 1e-9 ? ` (default ${fmt(d, c.digits || 1)})` : ''}`;
+    }
+  }
+}
+syncConfigInputs();
+const isDefault = () => CONFIG_KEYS.every(k => cfg[k] === DEFAULT_CFG[k]);
+const overrides = () => Object.fromEntries(CONFIG_KEYS.filter(k => cfg[k] !== DEFAULT_CFG[k]).map(k => [k, cfg[k]]));
+
+let worker = null, reqId = 0, rebuildTimer = 0, stlUrls = [], customGeo = [];
+function setStatus(html) { $('buildStatus').innerHTML = html; }
+function checksHtml(ch, ms) {
+  if (ch.clean) return `<span><span class="ok">✓ Fits.</span> ${ch.pairs} part pairs checked, ${fmt(ch.keycapGap, 2)} mm keycap clearance${ms != null ? ` · built in ${ms} ms` : ''}.</span>`;
+  return `<span class="bad">✗ ${ch.problems.length} fit problem${ch.problems.length > 1 ? 's' : ''}. Don't print this yet:</span><ul>${ch.problems.map(p => `<li>${p}</li>`).join('')}</ul>`;
+}
+function getWorker() {
+  if (worker) return worker;
+  const url = URL.createObjectURL(new Blob([window.WORKER_SRC], { type: 'text/javascript' }));
+  worker = new Worker(url, { type: 'module' });
+  worker.onmessage = ({ data }) => {
+    if (data.ready || data.id !== reqId) return; // stale result
+    if (data.error) { setStatus(`<span class="bad">Rebuild failed:</span> ${data.error}`); return; }
+    applyBuild(data);
+  };
+  worker.onerror = (e) => {
+    e.preventDefault?.();
+    setStatus('<span class="bad">The geometry engine could not load.</span> The configurator needs module workers and access to cdn.jsdelivr.net.');
+    worker = null;
+  };
+  return worker;
+}
+function scheduleRebuild(delay) { clearTimeout(rebuildTimer); rebuildTimer = setTimeout(rebuild, delay); }
+function rebuild() {
+  reqId++;
+  if (isDefault()) { applyDefault(); return; }
+  setStatus(`<span>Rebuilding…${worker ? '' : ' (loading the geometry engine, ~0.6 MB, first time only)'}</span>`);
+  try { getWorker().postMessage({ id: reqId, params: { ...overrides() }, stl: true }); }
+  catch (e) { setStatus(`<span class="bad">Rebuild failed:</span> ${e.message}`); }
+}
+function swapGeometry(geos) {
+  for (const g of customGeo) g.dispose();
+  customGeo = [];
+  for (const [k, m] of Object.entries(meshes)) {
+    m.geometry = geos[k];
+    if (geos[k] !== DEFAULT_GEO[k]) customGeo.push(geos[k]);
+  }
+}
+function setModelInfo(params, levels, cell, checks) {
+  const oldTop = L.Ztop;
+  PR = params; L = levels; CELL = cell; CHECKS = checks;
+  placeLights(); renderInfo();
+  // keep the camera looking at the same part of the model when the height changes
+  const dz = (L.Ztop - oldTop) * 0.6;
+  controls.target.z += dz; camera.position.z += dz;
+  invalidate();
+}
+function applyDefault() {
+  swapGeometry(DEFAULT_GEO);
+  setModelInfo({ ...DEFAULT_P }, { ...D.levels }, D.cell, D.checks);
+  setStlLinks(null);
+  setStatus(checksHtml(D.checks) + '<span class="note">Default build: the STLs below are the published ones.</span>');
+}
+function applyBuild(data) {
+  const geos = {};
+  for (const [k, { pos, idx }] of Object.entries(data.parts)) geos[k] = makeGeometry(pos, idx);
+  swapGeometry(geos);
+  setModelInfo({ ...DEFAULT_P, ...overrides() }, data.levels, data.cell, data.checks);
+  setStlLinks(data.stls);
+  setStatus(checksHtml(data.checks, data.ms));
+}
+function setStlLinks(stls) {
+  for (const u of stlUrls) URL.revokeObjectURL(u);
+  stlUrls = [];
+  $('print').innerHTML = Object.entries(D.prints).map(([name, s]) => {
+    let href = `stl/${name}.stl`, file = `${name}.stl`, size = '';
+    if (stls && stls[name]) {
+      href = URL.createObjectURL(new Blob([stls[name]], { type: 'model/stl' })); stlUrls.push(href);
+      file = `${name}-${cfg.battery}-custom.stl`; size = ` · ${Math.round(stls[name].byteLength / 1024)} KB`;
+    }
+    return `<tr><td><a href="${href}" download="${file}"><code>${file}</code></a></td><td>${s.note}${size}</td></tr>`;
+  }).join('');
+}
+$('cfgReset').addEventListener('click', () => { Object.assign(cfg, DEFAULT_CFG); syncConfigInputs(); save(); scheduleRebuild(0); });
+async function copy(text, msg) {
+  try { await navigator.clipboard.writeText(text); toast(msg); }
+  catch { prompt('Copy this:', text); }
+}
+$('cfgShare').addEventListener('click', () => {
+  const q = new URLSearchParams();
+  for (const [k, v] of Object.entries(overrides())) q.set(k, v);
+  for (const k of ['mode', 'color', 'top', 'cap', 'dif', 'sw']) if (look[k] !== DEFAULT_LOOK[k]) q.set(k, look[k]);
+  const url = location.href.split('#')[0] + (q.toString() ? '#' + q : '');
+  history.replaceState(null, '', url);
+  copy(url, 'Share link copied');
+});
+$('cfgCopy').addEventListener('click', () => {
+  const o = overrides();
+  const text = Object.keys(o).length ? Object.entries(o).map(([k, v]) => `  ${k}: ${JSON.stringify(v)},`).join('\n') : '// defaults: nothing to change';
+  copy(text, 'Params copied. Paste them into src/params.mjs');
+});
 
 // ---------- animation ----------
 function resize() {
   const w = stage.clientWidth, h = stage.clientHeight;
-  renderer.setSize(w, h, false); camera.aspect = w / h; camera.updateProjectionMatrix();
+  if (!w || !h) return;
+  renderer.setSize(w, h, false); camera.aspect = w / h;
+  camera.fov = w / h < 0.8 ? 40 : 30; // phones in portrait: widen so the whole fidget fits
+  camera.updateProjectionMatrix(); invalidate();
 }
-new ResizeObserver(resize).observe(stage); resize();
+new ResizeObserver(resize).observe(stage);
 
-const tmp = new THREE.Color(), base = new THREE.Color();
-let last = performance.now();
+const tmp = new THREE.Color(), base = new THREE.Color(), lc = new THREE.Color();
+let frames = 0, slowAcc = 0;
+function lightAnimated() { return look.mode === 'breathe' || look.mode === 'rainbow' || look.mode === 'spin' || (look.mode === 'reactive' && (state.flash > 0.001)); }
 function frame(now) {
   const dt = Math.min(0.05, (now - last) / 1000); last = now;
-  const t = now / 1000;
+  state.t += dt * look.speed;
+  const t = state.t;
   const k = reduceMotion ? 1 : 1 - Math.exp(-dt * 10);
-  const prevE = state.explode;
-  state.explode += (state.explodeTarget - state.explode) * k;
-  if (state.explode !== prevE) camera.position.sub(controls.target).multiplyScalar((1 + 0.9 * state.explode) / (1 + 0.9 * prevE)).add(controls.target);
-  state.press += (state.pressTarget - state.press) * (reduceMotion ? 1 : 1 - Math.exp(-dt * 28));
-  $('explodeVal').textContent = `${Math.round(state.explode * EXPLODE_MM)} mm`;
-  for (const [key, p] of Object.entries(PARTS)) {
-    const m = meshes[key], e = state.explode * EXPLODE_MM;
-    m.position.set(p.e[0] * e, p.e[1] * e, p.e[2] * e - (p.press ? state.press * PR.travel : 0));
+  let moving = false;
+
+  // camera presets
+  if (camAnim) {
+    camAnim.t = Math.min(1, camAnim.t + dt / 0.6);
+    const e = 1 - Math.pow(1 - camAnim.t, 3);
+    camera.position.lerpVectors(camAnim.fromP, camAnim.toP, e);
+    controls.target.lerpVectors(camAnim.fromT, camAnim.toT, e);
+    if (camAnim.t >= 1) camAnim = null;
+    moving = true;
   }
+  // explode + press tweens
+  if (Math.abs(state.explodeTarget - state.explode) > 1e-4) {
+    const prevE = state.explode;
+    state.explode += (state.explodeTarget - state.explode) * k;
+    if (Math.abs(state.explodeTarget - state.explode) <= 1e-4) state.explode = state.explodeTarget;
+    if (!camAnim) camera.position.sub(controls.target).multiplyScalar((1 + 0.9 * state.explode) / (1 + 0.9 * prevE)).add(controls.target);
+    $('explodeVal').textContent = `${Math.round(state.explode * EXPLODE_MM)} mm`;
+    moving = true;
+  }
+  if (Math.abs(state.pressTarget - state.press) > 1e-4) {
+    state.press += (state.pressTarget - state.press) * (reduceMotion ? 1 : 1 - Math.exp(-dt * 28));
+    if (Math.abs(state.pressTarget - state.press) <= 1e-4) state.press = state.pressTarget;
+    moving = true;
+  }
+  const ex = state.explode * EXPLODE_MM;
+  for (const [key, p] of Object.entries(PARTS)) {
+    const m = meshes[key];
+    m.position.set(p.e[0] * ex, p.e[1] * ex, p.e[2] * ex - (p.press ? state.press * PR.travel : 0));
+    m.updateMatrix();
+  }
+
   // light
   let level = 0;
-  base.set(state.color);
-  switch (state.mode) {
-    case 'static': level = 1; break;
+  base.set(look.color);
+  switch (look.mode) {
+    case 'static': case 'spin': level = 1; break;
     case 'breathe': level = 0.12 + 0.88 * (0.5 - 0.5 * Math.cos(t * 2 * Math.PI / 3.4)); break;
-    case 'rainbow': level = 1; base.setHSL((0.08 + (t - state.t0) * 0.06) % 1, 0.85, 0.58); break;
+    case 'rainbow': level = 1; base.setHSL((0.08 + t * 0.06) % 1, 0.85, 0.58); break;
     case 'reactive': level = 0.06 + 0.94 * state.flash; break;
   }
-  state.flash = Math.max(state.pressTarget ? 1 : 0, state.flash - dt * 1.1);
-  tmp.copy(base).multiplyScalar(1.5 * level);
+  state.flash = Math.max(state.pressTarget ? 1 : 0, state.flash - dt * 1.1 * look.speed);
+  level *= look.bright;
+  const spinPhase = t * 2.4;
+  tmp.copy(base).multiplyScalar(1.5 * level * (look.mode === 'spin' ? 0.55 : 1));
   M.diffuser.emissive.copy(tmp);
   M.led.emissive.copy(base); M.led.emissiveIntensity = 0.15 + 2.2 * level;
   for (const l of glowLights) {
+    let s = 1;
+    if (look.mode === 'spin' && l.userData.k !== 'switch') s = 0.08 + 0.92 * Math.pow(Math.max(0, Math.cos(l.userData.angle - spinPhase)), 3) * 1.6;
     l.color.copy(base);
-    l.intensity = level * (l.userData.k === 'body' ? 260 : l.userData.k === 'switch' ? 120 : 40) * (1 - 0.6 * state.explode);
+    l.intensity = s * level * (l.userData.k === 'body' ? 260 : l.userData.k === 'switch' ? 120 : 40) * (1 - 0.6 * state.explode);
   }
-  controls.update();
-  renderer.render(scene, camera);
-  requestAnimationFrame(frame);
+
+  const camChanged = controls.update(dt);
+  const animating = moving || camChanged || controls.autoRotate || lightAnimated();
+  if (needsRender || animating) { renderer.render(scene, camera); needsRender = false; }
+
+  // Adaptive resolution: if sustained animation runs slow, lower the pixel ratio a step (never below 1).
+  if (animating) {
+    frames++; slowAcc += dt;
+    if (frames === 90) {
+      if (slowAcc / frames > 1 / 34 && dpr > 1) { dpr = Math.max(1, dpr - 0.25); renderer.setPixelRatio(dpr); resize(); }
+      frames = 0; slowAcc = 0;
+    }
+  }
+  if (animating && onScreen && !document.hidden) requestAnimationFrame(frame);
+  else running = false;
 }
-requestAnimationFrame(frame);
+
+// ---------- start ----------
+applyStageColor();
+resize();
+{ const { to, target } = viewPose('iso'); camera.position.copy(to); controls.target.copy(target); controls.update(); }
+setSpin(look.spin);
+renderInfo();
+setStlLinks(null);
+if (isDefault()) setStatus(checksHtml(D.checks) + '<span class="note">Default build: the STLs below are the published ones.</span>');
+else scheduleRebuild(0);
+$('overlay').hidden = true;
+invalidate();
 window.__ready = true;
+window.__fidget = { state, look, cfg, meshes, renderer, camera, controls, invalidate, get running() { return running; } };
 </script>
+</body>
+</html>
