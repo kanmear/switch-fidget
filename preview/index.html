@@ -74,6 +74,7 @@
   .stacklist span { font-family: var(--font-mono); color: var(--muted); font-size: 11.5px; }
   ul { margin: 0; padding-left: 18px; display: grid; gap: 4px; }
   li::marker { color: var(--muted); }
+  .panel a { color: var(--fg); text-decoration-color: var(--accent); text-underline-offset: 3px; }
   code { font-family: var(--font-mono); font-size: 12px; background: var(--chip); padding: 1px 4px; border-radius: 4px; }
   .ok { color: #2f8f5b; font-weight: 600; }
   .note { font-size: 12.5px; color: var(--muted); }
@@ -400,7 +401,9 @@ const prints = [
   ['upper_housing.stl', 'opaque · upright'],
   ['diffuser.stl', 'frosted · upright'],
 ];
-$('print').innerHTML = prints.map(([a, b]) => `<tr><td><code>${a}</code></td><td>${b}</td></tr>`).join('') +
+// STL downloads: next to the page on GitHub Pages, one folder up when opened from a local clone.
+const stlBase = location.protocol === 'file:' ? '../stl/' : 'stl/';
+$('print').innerHTML = prints.map(([a, b]) => `<tr><td><a href="${stlBase}${a}" download><code>${a}</code></a></td><td>${b}</td></tr>`).join('') +
   `<tr><td colspan="2" class="note" style="text-align:left;font-family:var(--font-body)">No supports needed. Print the diffuser in natural PETG or "transparent" PLA at 100% infill, then lightly sand or bead-blast it for an even frost.</td></tr>`;
 
 const stackEl = $('stack');

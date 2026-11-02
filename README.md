@@ -27,6 +27,10 @@ npm run build     # checks fit, then regenerates STLs + preview
 npm run check     # fit checks only
 ```
 
+## Live preview (GitHub Pages)
+
+`.github/workflows/pages.yml` rebuilds the model on every push to `main`. It fails if any parts collide, and otherwise publishes the preview with STL download links. To turn it on once, go to **Settings → Pages → Build and deployment → Source** and choose **GitHub Actions**. Then re-run the **Pages** workflow from the Actions tab.
+
 ## Printing
 
 | Part | Material | Orientation |
