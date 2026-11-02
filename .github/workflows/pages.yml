@@ -26,6 +26,7 @@ jobs:
           node-version: 22
           cache: npm
       - run: npm ci
+      - run: npm run check # every battery variant must fit
       - run: npm run build # fails the job if any parts collide
       - name: Assemble site
         run: |

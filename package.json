@@ -6,7 +6,7 @@
   "main": "src/model.mjs",
   "scripts": {
     "build": "node scripts/build.mjs",
-    "check": "node scripts/check.mjs"
+    "check": "node scripts/check.mjs all"
   },
   "keywords": [],
   "author": "",
