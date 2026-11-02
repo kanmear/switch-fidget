@@ -1,0 +1,464 @@
+<title>MX Switch Fidget</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wdth,wght@100..125,400..800&family=JetBrains+Mono:wght@400;600&display=swap">
+<style>
+  /* Layout: full-height workbench — 3D stage fills the left, a narrow spec/control rail on the right; stacks on phones. */
+  :root {
+    --bg: #eceef1;
+    --panel: #f7f8f9;
+    --stage: #dde1e6;
+    --fg: #15171c;
+    --muted: #5d6471;
+    --line: #d3d8de;
+    --accent: #b5700b;
+    --accent-ink: #ffffff;
+    --chip: #e6e9ed;
+    --font-display: "Archivo", "Helvetica Neue", Arial, sans-serif;
+    --font-body: "Archivo", "Helvetica Neue", Arial, sans-serif;
+    --font-mono: "JetBrains Mono", ui-monospace, "SFMono-Regular", Menlo, monospace;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #0f1114; --panel: #15181c; --stage: #0b0d10; --fg: #e8eaee; --muted: #8f97a4;
+      --line: #262a31; --accent: #f0b43c; --accent-ink: #1a1305; --chip: #1e2228; color-scheme: dark;
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #0f1114; --panel: #15181c; --stage: #0b0d10; --fg: #e8eaee; --muted: #8f97a4;
+    --line: #262a31; --accent: #f0b43c; --accent-ink: #1a1305; --chip: #1e2228; color-scheme: dark;
+  }
+  html, body { height: 100%; }
+  body { background: var(--bg); color: var(--fg); font-family: var(--font-body); font-size: 14px; line-height: 1.45; }
+  .app { display: grid; grid-template-columns: minmax(0, 1fr) 380px; height: 100%; }
+  .stage { position: relative; background: var(--stage); min-height: 0; overflow: hidden; }
+  #c { display: block; width: 100%; height: 100%; touch-action: none; cursor: grab; }
+  #c.pressable { cursor: pointer; }
+  .hud { position: absolute; left: max(16px, env(safe-area-inset-left, 0px)); top: 16px; pointer-events: none; display: grid; gap: 2px; }
+  .hud h1 { margin: 0; font-family: var(--font-display); font-stretch: 118%; font-weight: 750; font-size: 22px; letter-spacing: -0.01em; }
+  .hud .dims { font-family: var(--font-mono); font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; }
+  .hint { position: absolute; left: max(16px, env(safe-area-inset-left, 0px)); bottom: 14px; font-size: 12px; color: var(--muted); pointer-events: none; }
+  .quick { position: absolute; right: 16px; bottom: 14px; display: flex; gap: 6px; flex-wrap: wrap; justify-content: flex-end; }
+  .panel { background: var(--panel); border-left: 1px solid var(--line); overflow-y: auto; min-height: 0;
+           padding-block: 18px 28px; padding-left: max(18px, env(safe-area-inset-left, 0px)); padding-right: max(18px, env(safe-area-inset-right, 0px));
+           display: flex; flex-direction: column; gap: 22px; }
+  .lede { margin: 0; color: var(--muted); max-width: 60ch; }
+  section { display: grid; gap: 10px; }
+  h2 { margin: 0; font-family: var(--font-mono); font-size: 11px; font-weight: 600; letter-spacing: 0.12em; text-transform: uppercase; color: var(--muted); }
+  .row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+  .row label { flex: 1 1 auto; }
+  input[type=range] { width: 100%; accent-color: var(--accent); }
+  .btn { font: inherit; font-size: 13px; font-weight: 600; border: 1px solid var(--line); background: var(--panel); color: var(--fg);
+         padding: 6px 11px; border-radius: 6px; cursor: pointer; }
+  .btn:hover { border-color: var(--muted); }
+  .btn[aria-pressed="true"] { background: var(--fg); color: var(--panel); border-color: var(--fg); }
+  .btn.primary { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); }
+  .btn:focus-visible, input:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  .seg { display: flex; flex-wrap: wrap; gap: 4px; }
+  .swatches { display: flex; gap: 8px; flex-wrap: wrap; }
+  .sw { width: 26px; height: 26px; border-radius: 50%; border: 2px solid var(--panel); box-shadow: 0 0 0 1px var(--line); cursor: pointer; padding: 0; }
+  .sw[aria-pressed="true"] { box-shadow: 0 0 0 2px var(--fg); }
+  .parts { display: grid; gap: 2px; }
+  .part { display: grid; grid-template-columns: 18px 12px 1fr auto; align-items: center; gap: 8px; padding: 4px 0; font-size: 13px; }
+  .part input { margin: 0; accent-color: var(--accent); }
+  .dot { width: 12px; height: 12px; border-radius: 3px; }
+  .tag { font-family: var(--font-mono); font-size: 10.5px; color: var(--muted); }
+  table { border-collapse: collapse; width: 100%; font-size: 13px; }
+  td { padding: 5px 0; border-bottom: 1px solid var(--line); vertical-align: top; }
+  td:last-child { text-align: right; font-family: var(--font-mono); font-size: 12px; font-variant-numeric: tabular-nums; padding-left: 12px; }
+  .stack { display: grid; grid-template-columns: 54px 1fr; gap: 10px; align-items: stretch; }
+  .stackbar { display: flex; flex-direction: column-reverse; border-radius: 4px; overflow: hidden; border: 1px solid var(--line); }
+  .stackbar div { display: flex; align-items: center; justify-content: center; font-family: var(--font-mono); font-size: 10px; }
+  .stacklist { display: flex; flex-direction: column-reverse; justify-content: space-between; font-size: 12.5px; }
+  .stacklist span { font-family: var(--font-mono); color: var(--muted); font-size: 11.5px; }
+  ul { margin: 0; padding-left: 18px; display: grid; gap: 4px; }
+  li::marker { color: var(--muted); }
+  code { font-family: var(--font-mono); font-size: 12px; background: var(--chip); padding: 1px 4px; border-radius: 4px; }
+  .ok { color: #2f8f5b; font-weight: 600; }
+  .note { font-size: 12.5px; color: var(--muted); }
+  @media (max-width: 860px) {
+    .app { grid-template-columns: 1fr; grid-template-rows: 62vh auto; height: auto; }
+    .panel { border-left: 0; border-top: 1px solid var(--line); overflow: visible; }
+  }
+</style>
+
+<div class="app">
+  <div class="stage" id="stage">
+    <canvas id="c" aria-label="3D preview of the MX switch fidget"></canvas>
+    <div class="hud">
+      <h1>MX Switch Fidget</h1>
+      <div class="dims" id="dims"></div>
+    </div>
+    <div class="hint" id="hint">Drag to orbit · scroll to zoom · press and hold the keycap</div>
+    <div class="quick">
+      <button class="btn" id="qAssembled" type="button">Assembled</button>
+      <button class="btn" id="qExploded" type="button">Exploded</button>
+      <button class="btn" id="qSection" type="button" aria-pressed="false">Cut away</button>
+    </div>
+  </div>
+
+  <aside class="panel">
+    <p class="lede">A standard Cherry MX switch and keycap in a low-profile housing. The opaque top has a raised collar that hides the keycap gap. The frosted lower half lights up from a small custom PCB, which also takes USB-C and reads key presses.</p>
+
+    <section>
+      <h2>View</h2>
+      <div class="row"><label for="explode">Explode</label><span class="tag" id="explodeVal">0 mm</span></div>
+      <input type="range" id="explode" min="0" max="1" step="0.01" value="0">
+      <div class="row">
+        <button class="btn primary" id="press" type="button">Press key</button>
+        <button class="btn" id="section" type="button" aria-pressed="false">Cut-away section</button>
+        <button class="btn" id="spin" type="button" aria-pressed="true">Auto-rotate</button>
+      </div>
+    </section>
+
+    <section>
+      <h2>Light</h2>
+      <div class="seg" id="modes" role="group" aria-label="Light mode"></div>
+      <div class="swatches" id="glowSw" role="group" aria-label="Light color"></div>
+    </section>
+
+    <section>
+      <h2>Top shell & keycap</h2>
+      <div class="row"><span class="tag" style="width:64px">Shell</span><div class="swatches" id="topSw" role="group" aria-label="Top shell color"></div></div>
+      <div class="row"><span class="tag" style="width:64px">Keycap</span><div class="swatches" id="capSw" role="group" aria-label="Keycap color"></div></div>
+    </section>
+
+    <section>
+      <h2>Parts</h2>
+      <div class="parts" id="parts"></div>
+    </section>
+
+    <section>
+      <h2>Stack-up (Z, mm)</h2>
+      <div class="stack" id="stack"></div>
+    </section>
+
+    <section>
+      <h2>Spec</h2>
+      <table id="spec"></table>
+    </section>
+
+    <section>
+      <h2>Hardware</h2>
+      <ul>
+        <li>Any MX-compatible switch (3- or 5-pin) and a 1u Cherry-profile keycap</li>
+        <li>Custom 22.4 × 22.4 mm PCB, 1.6 mm thick (footprint below)</li>
+        <li>301020 LiPo pouch (3 × 10 × 20 mm, ≈40 mAh) with a JST-SH 2-pin plug</li>
+        <li>2 × M2×10 screws from below (self-tapping into the upper housing)</li>
+      </ul>
+    </section>
+
+    <section>
+      <h2>PCB footprint</h2>
+      <table>
+        <tr><td>Kailh MX hot-swap socket</td><td>underside</td></tr>
+        <tr><td>USB-C receptacle, overhangs south edge 1.2 mm</td><td>underside</td></tr>
+        <tr><td>4 × 2020 addressable LEDs facing the diffuser</td><td>underside</td></tr>
+        <tr><td>4 × 2020 LEDs under the halo light pipes</td><td>top</td></tr>
+        <tr><td>SK6812MINI-E in the switch LED window</td><td>reverse mount</td></tr>
+        <tr><td>USB MCU (CH32X035 / CH552), LiPo charger, JST-SH</td><td>underside</td></tr>
+        <tr><td>Keep-out: parts ≤ 3.4 mm tall below, none on top outside the switch area</td><td></td></tr>
+      </table>
+    </section>
+
+    <section>
+      <h2>Circuit</h2>
+      <p class="note" style="margin:0">The LiPo powers the MCU and LEDs at all times through the charger and regulator. The two switch contacts work as a momentary closure between a GPIO with a pull-up and GND, and the firmware turns each press into a lighting effect. USB-C charges the battery and exposes the effect settings to a config tool.</p>
+    </section>
+
+    <section>
+      <h2>Printing</h2>
+      <table id="print"></table>
+    </section>
+  </aside>
+</div>
+
+<script type="importmap">
+{ "imports": {
+  "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+  "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+} }
+</script>
+<script>/*__MODEL_DATA__*/</script>
+<script type="module">
+import * as THREE from 'three';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
+import { toCreasedNormals } from 'three/addons/utils/BufferGeometryUtils.js';
+
+const D = window.MODEL, L = D.levels, PR = D.params;
+const reduceMotion = matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+// ---------- decode meshes ----------
+function b64(s, T) { const bin = atob(s); const u8 = new Uint8Array(bin.length); for (let i = 0; i < bin.length; i++) u8[i] = bin.charCodeAt(i); return new T(u8.buffer); }
+function geometry(key) {
+  const d = D.parts[key];
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.BufferAttribute(b64(d.p, Float32Array), 3));
+  g.setIndex(new THREE.BufferAttribute(b64(d.i, d.i32 ? Uint32Array : Uint16Array), 1));
+  return toCreasedNormals(g, THREE.MathUtils.degToRad(32));
+}
+
+// ---------- renderer / scene ----------
+const canvas = document.getElementById('c');
+const stage = document.getElementById('stage');
+const renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
+renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+renderer.localClippingEnabled = true;
+renderer.toneMapping = THREE.ACESFilmicToneMapping;
+renderer.outputColorSpace = THREE.SRGBColorSpace;
+const scene = new THREE.Scene();
+const pmrem = new THREE.PMREMGenerator(renderer);
+scene.environment = pmrem.fromScene(new RoomEnvironment(renderer), 0.04).texture;
+scene.environmentIntensity = 0.55;
+const camera = new THREE.PerspectiveCamera(30, 1, 1, 2000);
+camera.up.set(0, 0, 1);
+camera.position.set(-58, -92, 60);
+const controls = new OrbitControls(camera, canvas);
+controls.target.set(0, 0, 13);
+controls.enableDamping = true;
+controls.minDistance = 30; controls.maxDistance = 300;
+controls.autoRotate = !reduceMotion; controls.autoRotateSpeed = 0.8;
+const key = new THREE.DirectionalLight(0xffffff, 1.4); key.position.set(-60, -80, 140); scene.add(key);
+const rim = new THREE.DirectionalLight(0xffffff, 0.5); rim.position.set(90, 70, 40); scene.add(rim);
+scene.add(new THREE.HemisphereLight(0xffffff, 0x404048, 0.35));
+
+function cssVar(n) { return getComputedStyle(document.documentElement).getPropertyValue(n).trim(); }
+function applyStageColor() { scene.background = new THREE.Color(cssVar('--stage')); }
+applyStageColor();
+matchMedia('(prefers-color-scheme: dark)').addEventListener('change', applyStageColor);
+new MutationObserver(applyStageColor).observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] });
+
+// ---------- materials ----------
+const clipPlane = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0);
+const clip = { planes: [] };
+const mats = [];
+function mat(opts, physical = false) {
+  const m = new (physical ? THREE.MeshPhysicalMaterial : THREE.MeshStandardMaterial)({ side: THREE.DoubleSide, ...opts });
+  mats.push(m); return m;
+}
+const M = {
+  top: mat({ color: 0x2b2e35, roughness: 0.62, metalness: 0.0 }),
+  diffuser: mat({ color: 0x8e9aa3, roughness: 0.6, envMapIntensity: 0.25, transparent: true, opacity: 0.7, depthWrite: false, emissive: 0x000000 }, true),
+  drawer: mat({ color: 0x2b2e35, roughness: 0.62 }),
+  housing: mat({ color: 0x3a3d44, roughness: 0.35, transparent: true, opacity: 0.88 }),
+  stem: mat({ color: 0xc8242b, roughness: 0.5 }),
+  keycap: mat({ color: 0x2a2c31, roughness: 0.78 }),
+  socket: mat({ color: 0x24262a, roughness: 0.6 }),
+  pcb: mat({ color: 0x1d3f73, roughness: 0.5 }),
+  metal: mat({ color: 0xb9bdc4, roughness: 0.28, metalness: 0.9 }),
+  cell: mat({ color: 0xcfd3d8, roughness: 0.25, metalness: 0.95 }),
+  brass: mat({ color: 0xc9a14a, roughness: 0.3, metalness: 0.9 }),
+  led: mat({ color: 0xffffff, roughness: 0.3, emissive: 0xffffff, emissiveIntensity: 1 }),
+  screw: mat({ color: 0x4a4d55, roughness: 0.35, metalness: 0.85 }),
+};
+
+// ---------- parts ----------
+// e = explode direction (multiplied by the explode distance)
+const PARTS = {
+  upper:      { mat: 'top',      e: [0, 0, 1.6] },
+  diffuser:   { mat: 'diffuser', e: [0, 0, -1.4], order: 2 },
+  switch:     { mat: 'housing',  e: [0, 0, 2.6] },
+  stem:       { mat: 'stem',     e: [0, 0, 2.6], press: true },
+  keycap:     { mat: 'keycap',   e: [0, 0, 3.5], press: true },
+  pcb:        { mat: 'pcb',      e: [0, 0, 0] },
+  socket:     { mat: 'socket',   e: [0, 0, 0] },
+  usb:        { mat: 'metal',    e: [0, 0, 0] },
+  chips:      { mat: 'socket',   e: [0, 0, 0] },
+  ledsBottom: { mat: 'led',      e: [0, 0, 0] },
+  ledsHalo:   { mat: 'led',      e: [0, 0, 0] },
+  battery:    { mat: 'cell',     e: [0, 0, -0.75] },
+  battTab:    { mat: 'brass',    e: [0, 0, -0.75] },
+  screws:     { mat: 'screw',    e: [0, 0, -2.3] },
+};
+const meshes = {};
+for (const [k, p] of Object.entries(PARTS)) {
+  const m = new THREE.Mesh(geometry(k), M[p.mat]);
+  if (p.order) m.renderOrder = p.order;
+  meshes[k] = m; scene.add(m);
+}
+const GROUPS = [
+  { label: 'Upper housing', keys: ['upper'], color: () => M.top.color, tag: 'print · opaque' },
+  { label: 'Diffuser', keys: ['diffuser'], color: () => new THREE.Color(0xdfe8ee), tag: 'print · frosted' },
+  { label: 'Switch & keycap', keys: ['switch', 'stem', 'keycap'], color: () => M.keycap.color, tag: 'ref' },
+  { label: 'PCB & socket', keys: ['pcb', 'socket', 'usb', 'chips'], color: () => M.pcb.color, tag: 'ref' },
+  { label: 'LEDs', keys: ['ledsBottom', 'ledsHalo'], color: () => new THREE.Color(0xffffff), tag: 'ref' },
+  { label: 'LiPo battery', keys: ['battery', 'battTab'], color: () => M.cell.color, tag: 'ref' },
+  { label: 'M2 screws', keys: ['screws'], color: () => M.screw.color, tag: 'ref' },
+];
+
+// ---------- glow lights ----------
+const glowLights = [];
+function addLight(x, y, z, dist, k) { const l = new THREE.PointLight(0xffffff, 0, dist, 1.6); l.position.set(x, y, z); l.userData.k = k; scene.add(l); glowLights.push(l); }
+for (const [x, y] of PR.ledsBottom) addLight(x * 0.7, y * 0.7, L.Zb - 3, 26, 'body');
+addLight(PR.ledPos[0], PR.ledPos[1], L.Zpcb + 3, 14, 'switch');
+for (const sx of [-1, 1]) for (const sy of [-1, 1]) addLight(sx * PR.haloPos, sy * PR.haloPos, L.Zpt + 0.8, 8, 'well');
+
+// ---------- state ----------
+const state = { explode: 0, explodeTarget: 0, press: 0, pressTarget: 0, mode: 'rainbow', color: '#39c6f0', flash: 0, t0: performance.now() / 1000 - 9 };
+const EXPLODE_MM = 9;
+const MODES = [['off', 'Off'], ['static', 'Static'], ['breathe', 'Breathe'], ['rainbow', 'Rainbow'], ['reactive', 'Reactive']];
+const GLOW_COLORS = ['#39c6f0', '#9b5cff', '#ff4d6d', '#ffb238', '#57e389', '#ffffff'];
+const TOP_COLORS = [['#2b2e35', 'Graphite'], ['#ebe7dd', 'Bone'], ['#d9542b', 'Signal orange'], ['#2f6f73', 'Teal'], ['#7d5cc6', 'Lilac']];
+const CAP_COLORS = [['#2a2c31', 'Black'], ['#e9e6dc', 'Cream PBT'], ['#d9542b', 'Orange'], ['#8fb8de', 'Sky'], ['#f2d36b', 'Butter']];
+
+// ---------- UI ----------
+const $ = (id) => document.getElementById(id);
+function pressedBtn(el, on) { el.setAttribute('aria-pressed', on ? 'true' : 'false'); }
+const modesEl = $('modes');
+for (const [id, label] of MODES) {
+  const b = document.createElement('button'); b.className = 'btn'; b.type = 'button'; b.id = 'mode-' + id; b.textContent = label;
+  b.addEventListener('click', () => { state.mode = id; syncModes(); });
+  modesEl.appendChild(b);
+}
+function syncModes() { for (const [id] of MODES) pressedBtn($('mode-' + id), state.mode === id); }
+syncModes();
+function swatches(el, list, current, onPick, idPrefix) {
+  el.innerHTML = '';
+  list.forEach((entry, i) => {
+    const [hex, name] = Array.isArray(entry) ? entry : [entry, entry];
+    const b = document.createElement('button'); b.className = 'sw'; b.type = 'button'; b.id = idPrefix + i;
+    b.style.background = hex; b.title = name; b.setAttribute('aria-label', name);
+    pressedBtn(b, hex === current);
+    b.addEventListener('click', () => { [...el.children].forEach(c => pressedBtn(c, c === b)); onPick(hex); });
+    el.appendChild(b);
+  });
+}
+swatches($('glowSw'), GLOW_COLORS, state.color, (h) => { state.color = h; if (state.mode === 'off' || state.mode === 'rainbow') state.mode = 'static'; syncModes(); }, 'glow');
+swatches($('topSw'), TOP_COLORS, TOP_COLORS[0][0], (h) => { M.top.color.set(h); refreshDots(); }, 'top');
+swatches($('capSw'), CAP_COLORS, CAP_COLORS[0][0], (h) => { M.keycap.color.set(h); refreshDots(); }, 'cap');
+
+const partsEl = $('parts');
+const dots = [];
+GROUPS.forEach((g, i) => {
+  const row = document.createElement('label'); row.className = 'part';
+  const cb = document.createElement('input'); cb.type = 'checkbox'; cb.checked = true; cb.id = 'part' + i;
+  cb.addEventListener('change', () => g.keys.forEach(k => meshes[k].visible = cb.checked));
+  const dot = document.createElement('span'); dot.className = 'dot'; dots.push([dot, g]);
+  const name = document.createElement('span'); name.textContent = g.label;
+  const tag = document.createElement('span'); tag.className = 'tag'; tag.textContent = g.tag;
+  row.append(cb, dot, name, tag); partsEl.appendChild(row);
+});
+function refreshDots() { for (const [d, g] of dots) d.style.background = '#' + g.color().getHexString(); }
+refreshDots();
+
+const explodeEl = $('explode');
+explodeEl.addEventListener('input', () => { state.explodeTarget = +explodeEl.value; });
+$('qAssembled').addEventListener('click', () => { state.explodeTarget = 0; explodeEl.value = 0; });
+$('qExploded').addEventListener('click', () => { state.explodeTarget = 1; explodeEl.value = 1; });
+function setSection(on) {
+  clip.planes = on ? [clipPlane] : [];
+  for (const m of mats) { m.clippingPlanes = clip.planes; m.needsUpdate = true; }
+  pressedBtn($('section'), on); pressedBtn($('qSection'), on);
+}
+$('section').addEventListener('click', () => setSection(!clip.planes.length));
+$('qSection').addEventListener('click', () => setSection(!clip.planes.length));
+$('spin').addEventListener('click', () => { controls.autoRotate = !controls.autoRotate; pressedBtn($('spin'), controls.autoRotate); });
+pressedBtn($('spin'), controls.autoRotate);
+
+function pressDown() { state.pressTarget = 1; state.flash = 1; }
+function pressUp() { state.pressTarget = 0; }
+$('press').addEventListener('pointerdown', pressDown);
+$('press').addEventListener('pointerup', pressUp);
+$('press').addEventListener('pointerleave', pressUp);
+$('press').addEventListener('keydown', (e) => { if (e.key === ' ' || e.key === 'Enter') { e.preventDefault(); pressDown(); } });
+$('press').addEventListener('keyup', (e) => { if (e.key === ' ' || e.key === 'Enter') pressUp(); });
+
+// press by clicking the keycap in the 3D view
+const ray = new THREE.Raycaster(), ndc = new THREE.Vector2();
+function hitKeycap(ev) {
+  const r = canvas.getBoundingClientRect();
+  ndc.set(((ev.clientX - r.left) / r.width) * 2 - 1, -((ev.clientY - r.top) / r.height) * 2 + 1);
+  ray.setFromCamera(ndc, camera);
+  const hits = ray.intersectObjects(Object.values(meshes).filter(m => m.visible), false);
+  const h = hits.find(h => !clip.planes.length || clipPlane.distanceToPoint(h.point) >= 0);
+  return h && (h.object === meshes.keycap || h.object === meshes.stem);
+}
+canvas.addEventListener('pointerdown', (ev) => {
+  controls.autoRotate = false; pressedBtn($('spin'), false);
+  if (hitKeycap(ev)) { controls.enabled = false; pressDown(); canvas.setPointerCapture(ev.pointerId); }
+}, { capture: true });
+canvas.addEventListener('pointerup', () => { if (state.pressTarget) { pressUp(); controls.enabled = true; } });
+canvas.addEventListener('pointermove', (ev) => { if (ev.buttons === 0) canvas.classList.toggle('pressable', !!hitKeycap(ev)); });
+
+// ---------- info panels ----------
+const fmt = (v) => v.toFixed(1);
+$('dims').textContent = `${PR.baseSize} × ${PR.baseSize} × ${fmt(L.Ztop)} mm · 2 printed parts`;
+const spec = [
+  ['Footprint at base · at collar', `${PR.baseSize} · ${fmt(PR.collarInner + 2.8)} mm`],
+  ['Height to collar rim / keycap top', `${fmt(L.Ztop)} / ≈${fmt(L.Zpt + PR.keycapBottomAbovePlate + PR.keycapH)} mm`],
+  ['Plate cutout · thickness', `${PR.plateCut.toFixed(1)} · 1.5 mm`],
+  ['Collar opening · height above plate', `${fmt(PR.collarInner)} · ${fmt(PR.collarAbovePlate)} mm`],
+  ['Skirt hidden by the collar', `≈${fmt(PR.collarAbovePlate - PR.keycapBottomAbovePlate)} mm`],
+  ['Keycap side clearance', `${D.checks.keycapGap.toFixed(2)} mm`],
+  ['Travel', `${fmt(PR.travel)} mm, unobstructed`],
+  ['Part interference', `<span class="ok">${D.checks.clean ? 'none' : 'check'}</span> · ${D.checks.pairs} pairs`],
+];
+$('spec').innerHTML = spec.map(([a, b]) => `<tr><td>${a}</td><td>${b}</td></tr>`).join('');
+const prints = [
+  ['upper_housing.stl', 'opaque · upright'],
+  ['diffuser.stl', 'frosted · upright'],
+];
+$('print').innerHTML = prints.map(([a, b]) => `<tr><td><code>${a}</code></td><td>${b}</td></tr>`).join('') +
+  `<tr><td colspan="2" class="note" style="text-align:left;font-family:var(--font-body)">No supports needed. Print the diffuser in natural PETG or "transparent" PLA at 100% infill, then lightly sand or bead-blast it for an even frost.</td></tr>`;
+
+const stackEl = $('stack');
+const layers = [
+  ['Diffuser', 0, L.Zb, '#cfe3ec', 'battery, LEDs, USB-C'],
+  ['PCB', L.Zb, L.Zpcb, '#1d3f73', 'socket underneath'],
+  ['Switch', L.Zpcb, L.Zpt, '#3a3e47', 'plate at top'],
+  ['Collar', L.Zpt, L.Ztop, '#2b2e35', 'hides the skirt'],
+];
+const total = L.Ztop, H = 150;
+stackEl.innerHTML =
+  `<div class="stackbar" style="height:${H}px">${layers.map(([n, a, b, c]) =>
+    `<div style="height:${((b - a) / total) * 100}%;background:${c};color:${c.startsWith('#3') || c.startsWith('#2') || c.startsWith('#1') ? '#e8eaee' : '#1a1c20'}">${fmt(b - a)}</div>`).join('')}</div>` +
+  `<div class="stacklist" style="height:${H}px">${layers.map(([n, a, b, , d]) => `<div>${n} <span>${fmt(a)}–${fmt(b)}</span><br><span>${d}</span></div>`).join('')}</div>`;
+
+// ---------- animation ----------
+function resize() {
+  const w = stage.clientWidth, h = stage.clientHeight;
+  renderer.setSize(w, h, false); camera.aspect = w / h; camera.updateProjectionMatrix();
+}
+new ResizeObserver(resize).observe(stage); resize();
+
+const tmp = new THREE.Color(), base = new THREE.Color();
+let last = performance.now();
+function frame(now) {
+  const dt = Math.min(0.05, (now - last) / 1000); last = now;
+  const t = now / 1000;
+  const k = reduceMotion ? 1 : 1 - Math.exp(-dt * 10);
+  const prevE = state.explode;
+  state.explode += (state.explodeTarget - state.explode) * k;
+  if (state.explode !== prevE) camera.position.sub(controls.target).multiplyScalar((1 + 0.9 * state.explode) / (1 + 0.9 * prevE)).add(controls.target);
+  state.press += (state.pressTarget - state.press) * (reduceMotion ? 1 : 1 - Math.exp(-dt * 28));
+  $('explodeVal').textContent = `${Math.round(state.explode * EXPLODE_MM)} mm`;
+  for (const [key, p] of Object.entries(PARTS)) {
+    const m = meshes[key], e = state.explode * EXPLODE_MM;
+    m.position.set(p.e[0] * e, p.e[1] * e, p.e[2] * e - (p.press ? state.press * PR.travel : 0));
+  }
+  // light
+  let level = 0;
+  base.set(state.color);
+  switch (state.mode) {
+    case 'static': level = 1; break;
+    case 'breathe': level = 0.12 + 0.88 * (0.5 - 0.5 * Math.cos(t * 2 * Math.PI / 3.4)); break;
+    case 'rainbow': level = 1; base.setHSL((0.08 + (t - state.t0) * 0.06) % 1, 0.85, 0.58); break;
+    case 'reactive': level = 0.06 + 0.94 * state.flash; break;
+  }
+  state.flash = Math.max(state.pressTarget ? 1 : 0, state.flash - dt * 1.1);
+  tmp.copy(base).multiplyScalar(1.5 * level);
+  M.diffuser.emissive.copy(tmp);
+  M.led.emissive.copy(base); M.led.emissiveIntensity = 0.15 + 2.2 * level;
+  for (const l of glowLights) {
+    l.color.copy(base);
+    l.intensity = level * (l.userData.k === 'body' ? 260 : l.userData.k === 'switch' ? 120 : 40) * (1 - 0.6 * state.explode);
+  }
+  controls.update();
+  renderer.render(scene, camera);
+  requestAnimationFrame(frame);
+}
+requestAnimationFrame(frame);
+window.__ready = true;
+</script>
