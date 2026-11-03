@@ -297,6 +297,10 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
 import { RectAreaLightUniformsLib } from 'three/addons/lights/RectAreaLightUniformsLib.js';
 import { toCreasedNormals } from 'three/addons/utils/BufferGeometryUtils.js';
+import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
+import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
+import { GTAOPass } from 'three/addons/postprocessing/GTAOPass.js';
+import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
 
 const D = window.MODEL;
 const DEFAULT_P = D.params;
@@ -365,26 +369,116 @@ renderer.localClippingEnabled = true;
 renderer.toneMapping = THREE.ACESFilmicToneMapping;
 renderer.outputColorSpace = THREE.SRGBColorSpace;
 renderer.shadowMap.enabled = true;
-renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+renderer.shadowMap.type = THREE.PCFShadowMap; // filtered by the PCSS code below
 RectAreaLightUniformsLib.init();
+
+// Soft shadows (PCSS). The key light stands in for a large, diffuse studio light, so its shadows should
+// be sharp where a part touches what it shades and widen with distance, not keep a hard edge. three's
+// stock filters blur by a fixed few texels, so swap in a blocker search plus a variable-width filter.
+// The shadow box has a fixed size (SHADOW_R) so these can be constants.
+const SHADOW_R = 46, KEY_DIST = 160, SHADOW_NEAR = KEY_DIST - SHADOW_R - 2, SHADOW_FAR = KEY_DIST + 2 * SHADOW_R + 30;
+const KEY_SOFT = 0.1;                                      // tan of the light's angular radius (~6°)
+const SHADOW_MAP = coarse ? 1024 : 2048;
+{
+  const D = SHADOW_FAR - SHADOW_NEAR, W = 2 * SHADOW_R, f = (x) => x.toFixed(6);
+  THREE.ShaderChunk.shadowmap_pars_fragment = THREE.ShaderChunk.shadowmap_pars_fragment
+    .replace('float getShadow(', `
+  #define PCSS_SCALE ${f(D * KEY_SOFT / W)}   // penumbra width in uv per unit of shadow depth
+  #define PCSS_MAX ${f(7 / W)}                // widest penumbra searched: 7 mm
+  #define PCSS_MIN ${f(1.2 / SHADOW_MAP)}
+  #define PCSS_EPS ${f(0.12 / D)}            // 0.12 mm of depth slack
+  #define PCSS_SLOPE ${f(4 * W / D)}         // cap on the receiver's depth slope (at silhouettes it blows up)
+  float pcssNoise( vec2 p ) { return fract( 52.9829189 * fract( dot( p, vec2( 0.06711056, 0.00583715 ) ) ) ); }
+  vec2 pcssDisk( int i, float n, float rot ) {
+    float r = sqrt( ( float( i ) + 0.5 ) / n ), a = float( i ) * 2.39996323 + rot;
+    return r * vec2( cos( a ), sin( a ) );
+  }
+  // g: the receiver's depth slope in shadow-map uv (receiver-plane bias), so a wide filter on a surface
+  // tilted to the light compares against the plane, not against the surface's own nearer parts.
+  float pcss( sampler2D map, vec2 uv, float z, vec2 g ) {
+    float rot = 6.2831853 * pcssNoise( gl_FragCoord.xy );
+    float sum = 0.0, cnt = 0.0;
+    for ( int i = 0; i < 16; i ++ ) {
+      vec2 o = pcssDisk( i, 16.0, rot ) * PCSS_MAX;
+      float d = unpackRGBAToDepth( texture2D( map, uv + o ) );
+      if ( d < z + dot( g, o ) - PCSS_EPS ) { sum += d; cnt += 1.0; }
+    }
+    if ( cnt == 0.0 ) return 1.0;
+    float pen = clamp( ( z - sum / cnt ) * PCSS_SCALE, PCSS_MIN, PCSS_MAX );
+    float lit = 0.0;
+    for ( int i = 0; i < 24; i ++ ) {
+      vec2 o = pcssDisk( i, 24.0, rot + 1.7 ) * pen;
+      lit += step( z + dot( g, o ) - PCSS_EPS, unpackRGBAToDepth( texture2D( map, uv + o ) ) );
+    }
+    return lit / 24.0;
+  }
+  vec2 pcssSlope( vec3 dx, vec3 dy ) {
+    mat2 m = mat2( dx.x, dy.x, dx.y, dy.y ); // rows: dx.xy, dy.xy
+    float det = determinant( m );
+    if ( abs( det ) < 1e-14 ) return vec2( 0.0 );
+    vec2 g = inverse( m ) * vec2( dx.z, dy.z );
+    float l = length( g );
+    return l > PCSS_SLOPE ? g * ( PCSS_SLOPE / l ) : g;
+  }
+  float getShadow(`)
+    .replace('bool frustumTest = inFrustum && shadowCoord.z <= 1.0;',
+             'bool frustumTest = inFrustum && shadowCoord.z <= 1.0;\n\t\tvec2 pcssG = pcssSlope( dFdx( shadowCoord.xyz ), dFdy( shadowCoord.xyz ) );')
+    .replace('if ( frustumTest ) {', 'if ( frustumTest ) {\n\t\t\treturn pcss( shadowMap, shadowCoord.xy, shadowCoord.z, pcssG );');
+}
 const scene = new THREE.Scene();
 const pmrem = new THREE.PMREMGenerator(renderer);
 scene.environment = pmrem.fromScene(new RoomEnvironment(renderer), 0.04).texture;
 pmrem.dispose();
-scene.environmentIntensity = 0.55;
-const camera = new THREE.PerspectiveCamera(30, 1, 1, 2000);
+// three r160 has no scene.environmentIntensity, so the room light is scaled on each material instead
+// (see mat() and applyFloor()). At full strength it lights every surface evenly, inside the housing too.
+const ENV = 0.45;
+const camera = new THREE.PerspectiveCamera(30, 1, 4, 1200);
 camera.up.set(0, 0, 1);
 const controls = new OrbitControls(camera, canvas);
 controls.enableDamping = true;
 controls.minDistance = 30; controls.maxDistance = 300;
 controls.autoRotate = look.spin; controls.autoRotateSpeed = 0.8;
-const keyLight = new THREE.DirectionalLight(0xffffff, 1.4); keyLight.position.set(-60, -80, 140); scene.add(keyLight);
-// The key light casts the fidget's shadow onto the floor (only the floor receives shadows).
-keyLight.shadow.mapSize.set(coarse ? 1024 : 2048, coarse ? 1024 : 2048);
-Object.assign(keyLight.shadow.camera, { left: -45, right: 45, top: 45, bottom: -45, near: 60, far: 320 });
-keyLight.shadow.radius = 4; keyLight.shadow.bias = -0.0004;
-const rimLight = new THREE.DirectionalLight(0xffffff, 0.5); rimLight.position.set(90, 70, 40); scene.add(rimLight);
-scene.add(new THREE.HemisphereLight(0xffffff, 0x404048, 0.35));
+// The key light casts shadows on every part and on the floor: the collar shades the keycap, the keycap
+// and switch shade the well, and the USB shell shades its own mouth. Its shadow box follows the model.
+const KEY_DIR = new THREE.Vector3(-60, -80, 140).normalize();
+const keyLight = new THREE.DirectionalLight(0xfff6ec, 2.6); scene.add(keyLight, keyLight.target);
+keyLight.castShadow = true;
+keyLight.shadow.mapSize.set(SHADOW_MAP, SHADOW_MAP);
+Object.assign(keyLight.shadow.camera, { left: -SHADOW_R, right: SHADOW_R, top: SHADOW_R, bottom: -SHADOW_R, near: SHADOW_NEAR, far: SHADOW_FAR });
+keyLight.shadow.camera.updateProjectionMatrix();
+keyLight.shadow.bias = -0.00015; keyLight.shadow.normalBias = 0.035;
+const rimLight = new THREE.DirectionalLight(0xe8f0ff, 0.9); rimLight.position.set(90, 70, 40); scene.add(rimLight);
+scene.add(new THREE.HemisphereLight(0xffffff, 0x303036, 0.25));
+const modelBox = new THREE.Box3(), partBox = new THREE.Box3(), modelCenter = new THREE.Vector3();
+function fitShadow() {
+  modelBox.makeEmpty();
+  for (const m of Object.values(meshes)) if (m.visible) modelBox.union(partBox.copy(m.geometry.boundingBox).translate(m.position));
+  if (modelBox.isEmpty()) return;
+  modelBox.getCenter(modelCenter);
+  // The box is fixed in size (see SHADOW_R) and follows the model's centre; its depth reaches the floor.
+  keyLight.target.position.copy(modelCenter); keyLight.target.updateMatrixWorld();
+  keyLight.position.copy(modelCenter).addScaledVector(KEY_DIR, KEY_DIST);
+}
+
+// Ambient occlusion (screen-space GTAO): darkens creases, the well, the USB mouth and the contact with
+// the floor, which the room light alone can't. Dropped first if the GPU can't keep up.
+let composer = null, gtao = null, aoOn = true;
+try {
+  composer = new EffectComposer(renderer, new THREE.WebGLRenderTarget(1, 1, { type: THREE.HalfFloatType, samples: 4 }));
+  composer.addPass(new RenderPass(scene, camera));
+  gtao = new GTAOPass(scene, camera, 1, 1);
+  gtao.updateGtaoMaterial({ radius: 4, distanceExponent: 1.2, thickness: 3, distanceFallOff: 1, scale: 1.4, samples: 16 });
+  gtao.updatePdMaterial({ lumaPhi: 10, depthPhi: 2, normalPhi: 3, radius: 5, rings: 2, samples: 16 });
+  gtao.blendIntensity = 1;
+  gtao.normalMaterial.side = THREE.DoubleSide;
+  // The floor stays out of the occlusion pass: GTAO darkens the final colour, glow included, so it would
+  // put a dark band in the diffuser's spill right where it is brightest. The floor shader does its own
+  // contact occlusion, on the room light only.
+  const ov = gtao.overrideVisibility.bind(gtao);
+  gtao.overrideVisibility = () => { ov(); floorGroup.visible = false; }; // restoreVisibility puts it back
+  composer.addPass(gtao);
+  composer.addPass(new OutputPass());
+} catch (e) { console.warn('Ambient occlusion is unavailable:', e); composer = null; aoOn = false; }
 
 function applyStageColor() { scene.background = new THREE.Color(getComputedStyle(stage).getPropertyValue('--stage').trim()); invalidate(); }
 matchMedia('(prefers-color-scheme: dark)').addEventListener('change', applyStageColor);
@@ -396,6 +490,7 @@ let sectionOn = false;
 const mats = [];
 function mat(opts, physical = false) {
   const m = new (physical ? THREE.MeshPhysicalMaterial : THREE.MeshStandardMaterial)({ side: THREE.DoubleSide, ...opts });
+  m.envMapIntensity *= ENV;
   mats.push(m); return m;
 }
 const M = {
@@ -412,7 +507,11 @@ const M = {
   metal: mat({ color: 0xb9bdc4, roughness: 0.28, metalness: 0.9 }),
   cell: mat({ color: 0xcfd3d8, roughness: 0.25, metalness: 0.95 }),
   brass: mat({ color: 0xc9a14a, roughness: 0.3, metalness: 0.9 }),
-  led: mat({ color: 0xffffff, roughness: 0.3, emissive: 0xffffff, emissiveIntensity: 1 }),
+  // Nickel-plated USB shell, tinned leads and contacts, white LED packages with a glowing lens.
+  shell: mat({ color: 0xd4d7dc, roughness: 0.22, metalness: 1, envMapIntensity: 1.6 }),
+  tin: mat({ color: 0xc3c7cc, roughness: 0.35, metalness: 0.9, envMapIntensity: 1.4 }),
+  ledBody: mat({ color: 0xeeece6, roughness: 0.55 }),
+  led: mat({ color: 0xfaf6e8, roughness: 0.15, emissive: 0xffffff, emissiveIntensity: 1 }),
   screw: mat({ color: 0x4a4d55, roughness: 0.35, metalness: 0.85 }),
 };
 
@@ -442,6 +541,49 @@ M.diffuser.onBeforeCompile = (sh) => {
       }`);
 };
 
+// Inside the USB-C shell the metal mostly reflects its own walls, not the room: darken it with depth
+// from the mouth so the port reads as an opening instead of a mirror. Applies to the shell and the contacts.
+const usbCavity = { uUsb: { value: new THREE.Vector4() }, uUsbY: { value: new THREE.Vector2() } };
+function placeUsbCavity() {
+  usbCavity.uUsb.value.set(PR.usbW / 2 - 0.22, PR.usbH / 2 - 0.22, 1.23, L.usbZ0 + PR.usbH / 2);
+  usbCavity.uUsbY.value.set(L.usbY0, L.usbY0 + PR.usbL);
+}
+for (const m of [M.shell, M.tin]) m.onBeforeCompile = (sh) => {
+  Object.assign(sh.uniforms, usbCavity);
+  sh.vertexShader = sh.vertexShader
+    .replace('#include <common>', '#include <common>\nvarying vec3 vObjPos;')
+    .replace('#include <begin_vertex>', '#include <begin_vertex>\nvObjPos = position;');
+  sh.fragmentShader = sh.fragmentShader
+    .replace('#include <common>', '#include <common>\nvarying vec3 vObjPos;\nuniform vec4 uUsb;\nuniform vec2 uUsbY;')
+    .replace('#include <opaque_fragment>', `{
+        // rounded-rectangle distance to the shell's inner wall (negative inside the opening)
+        vec2 q = abs(vec2(vObjPos.x, vObjPos.z - uUsb.w)) - uUsb.xy + uUsb.z;
+        float sd = length(max(q, 0.0)) + min(max(q.x, q.y), 0.0) - uUsb.z;
+        float depth = vObjPos.y - uUsbY.x;
+        float inside = step(sd, 0.03) * step(depth, uUsbY.y - uUsbY.x + 0.01);
+        outgoingLight *= mix(1.0, 0.12, inside * smoothstep(0.15, 2.8, depth));
+      }
+      #include <opaque_fragment>`);
+};
+
+// Cut-away: every part is a closed shell, so the cut shows its back faces, lit as if from inside, and
+// the parts look hollow. Paint back faces a flat, darker version of the part colour while the section
+// is on, so each cut reads as solid material.
+for (const m of mats) {
+  const prev = m.onBeforeCompile, key = prev.toString() + '|cap';
+  m.customProgramCacheKey = () => key; // keep each material's own shader hooks apart in the program cache
+  m.onBeforeCompile = (sh, r) => {
+    prev.call(m, sh, r);
+    sh.fragmentShader = sh.fragmentShader.replace('#include <opaque_fragment>', `#ifdef SECTION_CAP
+        if (!gl_FrontFacing) outgoingLight = diffuseColor.rgb * 0.42 + totalEmissiveRadiance * 0.4;
+      #endif
+      // The scene renders into a half-float buffer: a hot specular (an LED next to metal) would overflow
+      // it and smear through the diffuser's transmission as a colour-banded blob.
+      outgoingLight = min( outgoingLight, vec3( 48.0 ) );
+      #include <opaque_fragment>`);
+  };
+}
+
 // ---------- parts ----------
 // e = explode direction (multiplied by the explode distance)
 const PARTS = {
@@ -452,10 +594,13 @@ const PARTS = {
   keycap:     { mat: 'keycap',   e: [0, 0, 3.5], press: true },
   pcb:        { mat: 'pcb',      e: [0, 0, 0] },
   socket:     { mat: 'socket',   e: [0, 0, 0] },
-  usb:        { mat: 'metal',    e: [0, 0, 0] },
+  usb:        { mat: 'shell',    e: [0, 0, 0] },
+  usbTongue:  { mat: 'socket',   e: [0, 0, 0] },
   chips:      { mat: 'socket',   e: [0, 0, 0] },
+  leads:      { mat: 'tin',      e: [0, 0, 0] },
   ledsBottom: { mat: 'led',      e: [0, 0, 0] },
   ledsHalo:   { mat: 'led',      e: [0, 0, 0] },
+  ledBodies:  { mat: 'ledBody',  e: [0, 0, 0] },
   battery:    { mat: 'cell',     e: [0, 0, -0.75] },
   battTab:    { mat: 'brass',    e: [0, 0, -0.75] },
   screws:     { mat: 'screw',    e: [0, 0, -2.3] },
@@ -464,7 +609,7 @@ const meshes = {};
 for (const [k, p] of Object.entries(PARTS)) {
   const m = new THREE.Mesh(DEFAULT_GEO[k], M[p.mat]);
   if (p.order) m.renderOrder = p.order;
-  m.castShadow = true;
+  m.castShadow = true; m.receiveShadow = true;
   m.matrixAutoUpdate = false;
   meshes[k] = m; scene.add(m);
 }
@@ -472,8 +617,8 @@ const GROUPS = [
   { label: 'Upper housing', keys: ['upper'], color: () => M.top.color, tag: 'print · opaque' },
   { label: 'Diffuser', keys: ['diffuser'], color: () => new THREE.Color(look.dif).lerp(new THREE.Color(0xffffff), 0.5), tag: 'print · frosted' },
   { label: 'Switch & keycap', keys: ['switch', 'stem', 'keycap'], color: () => M.keycap.color, tag: 'ref' },
-  { label: 'PCB & socket', keys: ['pcb', 'socket', 'usb', 'chips'], color: () => M.pcb.color, tag: 'ref' },
-  { label: 'LEDs', keys: ['ledsBottom', 'ledsHalo'], color: () => new THREE.Color(0xffffff), tag: 'ref' },
+  { label: 'PCB & socket', keys: ['pcb', 'socket', 'usb', 'usbTongue', 'chips', 'leads'], color: () => M.pcb.color, tag: 'ref' },
+  { label: 'LEDs', keys: ['ledsBottom', 'ledsHalo', 'ledBodies'], color: () => new THREE.Color(0xffffff), tag: 'ref' },
   { label: 'Battery', keys: ['battery', 'battTab'], color: () => M.cell.color, tag: 'ref' },
   { label: 'M2 screws', keys: ['screws'], color: () => M.screw.color, tag: 'ref' },
 ];
@@ -481,13 +626,15 @@ const GROUPS = [
 // ---------- glow lights ----------
 const glowLights = [];
 function addLight(kind, dist) { const l = new THREE.PointLight(0xffffff, 0, dist, 1.6); l.userData.k = kind; scene.add(l); glowLights.push(l); return l; }
-for (let i = 0; i < DEFAULT_P.ledsBottom.length; i++) addLight('body', 26);
+// The down-facing LEDs light the inside of the diffuser only (short range, so they don't reach the floor
+// or sit next to the USB shell); the floor gets the diffuser's glow from its own shader below.
+for (let i = 0; i < DEFAULT_P.ledsBottom.length; i++) addLight('body', 9);
 addLight('switch', 14);
 for (let i = 0; i < 4; i++) addLight('well', 8);
 function placeLights() {
   let b = 0, w = 0;
   for (const l of glowLights) {
-    if (l.userData.k === 'body') { const [x, y] = PR.ledsBottom[b++]; l.position.set(x * 0.7, y * 0.7, L.Zb - 3); }
+    if (l.userData.k === 'body') { const [x, y] = PR.ledsBottom[b++]; l.position.set(x * 0.85, y * 0.85, L.Zb - 2); }
     else if (l.userData.k === 'switch') l.position.set(PR.ledPos[0], PR.ledPos[1], L.Zpcb + 3);
     else { const sx = w & 1 ? 1 : -1, sy = w & 2 ? 1 : -1; w++; l.position.set(sx * PR.haloPos, sy * PR.haloPos, L.Zpt + 0.8); }
     l.userData.base = l.position.clone();
@@ -495,6 +642,7 @@ function placeLights() {
   }
 }
 placeLights();
+placeUsbCavity();
 
 // ---------- surface finishes ----------
 // Every finish is a physically based material, so the LED glow, the halo lights and the diffuser's
@@ -506,12 +654,13 @@ const TOP_FINISHES = [
   ['silk', 'Silk', { roughness: 0.3, metalness: 0.55, clearcoat: 0.4, clearcoatRoughness: 0.2, sheen: 0 }],
 ];
 const CAP_FINISHES = [
-  ['pbt', 'PBT', { roughness: 0.8, clearcoat: 0, sheen: 0.3, sheenRoughness: 0.9 }],
+  ['pbt', 'PBT', { roughness: 0.8, clearcoat: 0, sheen: 0.25, sheenRoughness: 0.9 }],
   ['abs', 'ABS', { roughness: 0.32, clearcoat: 0.35, clearcoatRoughness: 0.15, sheen: 0 }],
 ];
 function applyFinish(m, list, id) {
   const f = (list.find(x => x[0] === id) || list[0])[2];
-  m.setValues(f); m.sheenColor?.set(0xffffff); m.needsUpdate = true;
+  // A white sheen on a dark part reads as grey haze, so the sheen takes the part's own colour.
+  m.setValues(f); m.sheenColor?.copy(m.color).lerp(new THREE.Color(0xffffff), 0.25); m.needsUpdate = true;
 }
 
 // ---------- floor ----------
@@ -556,22 +705,49 @@ const FLOORS = [
 const floorMat = new THREE.MeshPhysicalMaterial({ alphaMap: floorFade, transparent: true, depthWrite: true, sheenColor: 0x4a4e56 });
 const floor = new THREE.Mesh(new THREE.CircleGeometry(260, 96), floorMat);
 floor.receiveShadow = true; floor.renderOrder = -1;
-// Soft contact shadow: the key light alone leaves the base looking like it floats.
-const contactTex = canvasTex(256, 256, (g, w) => {
-  const s = w * 0.56, o = (w - s) / 2;
-  g.shadowColor = 'rgba(0,0,0,0.85)'; g.shadowBlur = w * 0.09; g.shadowOffsetX = w * 4;
-  g.fillStyle = '#000'; g.beginPath(); g.roundRect(o - w * 4, o, s, s, s * 0.14); g.fill();
-});
-const contact = new THREE.Mesh(new THREE.PlaneGeometry(1, 1),
-  new THREE.MeshBasicMaterial({ color: 0x000000, map: contactTex, transparent: true, depthWrite: false, opacity: 0.55 }));
-const floorGroup = new THREE.Group(); floorGroup.add(floor, contact); scene.add(floorGroup);
+// Light leaving the frosted walls, computed on the floor itself: an even halo that follows the base's
+// rounded outline and fades with distance, coloured by the nearest LEDs. (The LED point lights would
+// leave bright corners and a dim middle on each side, and could not tell the walls from the inside.)
+// The room light also gets a soft contact occlusion under the base edge; the glow does not.
+const floorGlow = {
+  uBase: { value: new THREE.Vector3(13.5, 3.6, 0) },   // half-size of the base, corner radius, contact strength
+  uFloorLed: { value: Array.from({ length: 4 }, () => new THREE.Vector2()) },
+  uFloorCol: { value: Array.from({ length: 4 }, () => new THREE.Color(0, 0, 0)) },
+};
+floorMat.onBeforeCompile = (sh) => {
+  Object.assign(sh.uniforms, floorGlow);
+  sh.vertexShader = sh.vertexShader
+    .replace('#include <common>', '#include <common>\nvarying vec2 vFloorXY;')
+    .replace('#include <worldpos_vertex>', '#include <worldpos_vertex>\nvFloorXY = ( modelMatrix * vec4( transformed, 1.0 ) ).xy;');
+  sh.fragmentShader = sh.fragmentShader
+    .replace('#include <common>', '#include <common>\nvarying vec2 vFloorXY;\nuniform vec3 uBase;\nuniform vec2 uFloorLed[4];\nuniform vec3 uFloorCol[4];')
+    .replace('#include <lights_fragment_end>', `#include <lights_fragment_end>
+      {
+        vec2 p = vFloorXY;
+        vec2 q = abs( p ) - uBase.x + uBase.y;
+        float sd = max( length( max( q, 0.0 ) ) + min( max( q.x, q.y ), 0.0 ) - uBase.y, 0.0 );
+        float occ = 1.0 - uBase.z * exp( - sd / 2.2 );
+        reflectedLight.directDiffuse *= occ; reflectedLight.indirectDiffuse *= occ;
+        reflectedLight.directSpecular *= occ; reflectedLight.indirectSpecular *= occ;
+        vec3 col = vec3( 0.0 ); float wsum = 0.0;
+        for ( int i = 0; i < 4; i ++ ) {
+          vec2 d = p - uFloorLed[ i ];
+          float w = 1.0 / ( 1.0 + dot( d, d ) / 90.0 );
+          col += uFloorCol[ i ] * w; wsum += w;
+        }
+        col /= max( wsum, 1e-4 );
+        float fall = 0.75 / ( 1.0 + sd * sd / 20.0 ) + 0.25 * exp( - sd / 16.0 );
+        reflectedLight.indirectDiffuse += material.diffuseColor * col * fall;
+      }`);
+};
+const floorGroup = new THREE.Group(); floorGroup.add(floor); scene.add(floorGroup);
 // The floor is hidden while the model is exploded (any amount); the setting comes back when it closes.
 const floorShown = () => look.floor && state.explodeTarget <= 0;
 function applyFloor() {
   const f = (FLOORS.find(x => x[0] === look.ground) || FLOORS[0])[2];
-  floorMat.setValues(f); floorMat.needsUpdate = true;
+  floorMat.setValues({ ...f, envMapIntensity: f.envMapIntensity * ENV }); floorMat.needsUpdate = true;
   const on = floorShown();
-  floorGroup.visible = on; keyLight.castShadow = on;
+  floorGroup.visible = on;
   stage.classList.toggle('floor-on', on); applyStageColor();
   // Keep the camera above the floor while it is shown.
   controls.maxPolarAngle = on ? Math.PI / 2 - 0.02 : Math.PI;
@@ -603,6 +779,7 @@ function placeWallLights(dz) {
 // ---------- state ----------
 const state = { explode: 0, explodeTarget: 0, press: 0, pressTarget: 0, flash: 0, t: 9 };
 const EXPLODE_MM = 9;
+const FLOOR_GLOW = 22; // brightness of the diffuser's spill on the floor
 const MODES = [['off', 'Off'], ['static', 'Static'], ['breathe', 'Breathe'], ['rainbow', 'Rainbow'], ['spin', 'Spin'], ['reactive', 'Reactive']];
 const GLOW_COLORS = [['#39c6f0', 'Ice'], ['#9b5cff', 'Violet'], ['#ff4d6d', 'Rose'], ['#ffb238', 'Amber'], ['#57e389', 'Mint'], ['#ffffff', 'White']];
 const TOP_COLORS = [['#2b2e35', 'Graphite'], ['#ebe7dd', 'Bone'], ['#d9542b', 'Signal orange'], ['#2f6f73', 'Teal'], ['#7d5cc6', 'Lilac']];
@@ -781,7 +958,8 @@ $('qExplode').addEventListener('click', () => setExplode(state.explodeTarget > 0
 function setSection(on) {
   sectionOn = on;
   const planes = on ? [clipPlane] : [];
-  for (const m of mats) { m.clippingPlanes = planes; m.needsUpdate = true; }
+  for (const m of [...mats, ...(gtao ? [gtao.normalMaterial] : [])]) { m.clippingPlanes = planes; m.needsUpdate = true; }
+  for (const m of mats) if (on) m.defines.SECTION_CAP = ''; else delete m.defines.SECTION_CAP;
   pressedBtn($('section'), on); pressedBtn($('qSection'), on);
   invalidate();
 }
@@ -835,8 +1013,8 @@ swatches($('glowSw'), GLOW_COLORS, () => look.color, (h) => {
 }, 'glow');
 slider('bright', 'bright', (v) => `${Math.round(v * 100)}%`);
 slider('speed', 'speed', (v) => `${fmt(v, 2)}×`);
-swatches($('topSw'), TOP_COLORS, () => look.top, (h) => { look.top = h; M.top.color.set(h); refreshDots(); save(); invalidate(); }, 'top');
-swatches($('capSw'), CAP_COLORS, () => look.cap, (h) => { look.cap = h; M.keycap.color.set(h); refreshDots(); save(); invalidate(); }, 'cap');
+swatches($('topSw'), TOP_COLORS, () => look.top, (h) => { look.top = h; M.top.color.set(h); applyFinish(M.top, TOP_FINISHES, look.topFin); refreshDots(); save(); invalidate(); }, 'top');
+swatches($('capSw'), CAP_COLORS, () => look.cap, (h) => { look.cap = h; M.keycap.color.set(h); applyFinish(M.keycap, CAP_FINISHES, look.capFin); refreshDots(); save(); invalidate(); }, 'cap');
 segmented($('topFin'), TOP_FINISHES.map(([id, l]) => [id, l]), () => look.topFin, (id) => { look.topFin = id; applyFinish(M.top, TOP_FINISHES, id); save(); invalidate(); }, 'topfin-');
 segmented($('capFin'), CAP_FINISHES.map(([id, l]) => [id, l]), () => look.capFin, (id) => { look.capFin = id; applyFinish(M.keycap, CAP_FINISHES, id); save(); invalidate(); }, 'capfin-');
 applyFinish(M.top, TOP_FINISHES, look.topFin); applyFinish(M.keycap, CAP_FINISHES, look.capFin);
@@ -1033,7 +1211,7 @@ function swapGeometry(geos) {
 function setModelInfo(params, levels, cell, checks) {
   const oldTop = L.Ztop;
   PR = params; L = levels; CELL = cell; CHECKS = checks;
-  placeLights(); renderInfo();
+  placeLights(); placeUsbCavity(); renderInfo();
   // keep the camera looking at the same part of the model when the height changes
   const dz = (L.Ztop - oldTop) * 0.6;
   controls.target.z += dz; camera.position.z += dz;
@@ -1090,6 +1268,7 @@ function resize() {
   const w = stage.clientWidth, h = stage.clientHeight;
   if (!w || !h) return;
   renderer.setSize(w, h, false); camera.aspect = w / h;
+  if (composer) { composer.setPixelRatio(dpr); composer.setSize(w, h); }
   camera.fov = w / h < 0.8 ? 40 : 30; // phones in portrait: widen so the whole fidget fits
   camera.updateProjectionMatrix(); invalidate();
 }
@@ -1169,7 +1348,7 @@ function frame(now) {
       l.color.r += difGlow.uLedCol.value[i].r * w; l.color.g += difGlow.uLedCol.value[i].g * w; l.color.b += difGlow.uLedCol.value[i].b * w;
     }
     const peak = Math.max(l.color.r, l.color.g, l.color.b);
-    l.intensity = floorShown() ? peak * 14 : 0;
+    l.intensity = floorShown() ? peak * 5 : 0; // mostly for the reflection on glossy floors and finishes
     if (peak > 0) l.color.multiplyScalar(1 / peak);
   }
   if (floorShown()) {
@@ -1178,11 +1357,13 @@ function frame(now) {
     let minZ = Infinity;
     for (const m of Object.values(meshes)) if (m.visible) minZ = Math.min(minZ, m.geometry.boundingBox.min.z + m.position.z);
     floorGroup.position.z = (Number.isFinite(minZ) ? minZ : 0) - 0.02;
-    const bb = meshes.diffuser.geometry.boundingBox;
-    contact.scale.set((bb.max.x - bb.min.x) * 1.8, (bb.max.y - bb.min.y) * 1.8, 1);
-    contact.position.z = 0.01;
-    contact.material.opacity = 0.55 * Math.max(0, 1 - 1.6 * state.explode);
-    contact.visible = meshes.diffuser.visible;
+    const bb = meshes.diffuser.geometry.boundingBox, on = meshes.diffuser.visible ? 1 : 0;
+    floorGlow.uBase.value.set(bb.max.x, PR.baseR, 0.6 * on * Math.max(0, 1 - 1.6 * state.explode));
+    for (let i = 0; i < 4; i++) {
+      const [x, y] = PR.ledsBottom[i] || [0, 0];
+      floorGlow.uFloorLed.value[i].set(x, y);
+      floorGlow.uFloorCol.value[i].copy(difGlow.uLedCol.value[i]).multiplyScalar(FLOOR_GLOW * on);
+    }
   }
   for (const l of glowLights) {
     const s = look.mode === 'spin' && l.userData.k !== 'switch' ? spinS(l.userData.angle) : 1;
@@ -1192,13 +1373,21 @@ function frame(now) {
 
   const camChanged = controls.update(dt);
   const animating = moving || camChanged || controls.autoRotate || lightAnimated();
-  if (needsRender || animating) { renderer.render(scene, camera); needsRender = false; }
+  if (needsRender || animating) {
+    fitShadow();
+    if (aoOn) composer.render(dt); else renderer.render(scene, camera);
+    needsRender = false;
+  }
 
-  // Adaptive resolution: if sustained animation runs slow, lower the pixel ratio a step (never below 1).
+  // Adaptive quality: if sustained animation runs slow, drop the ambient occlusion first, then lower the
+  // pixel ratio a step at a time (never below 1).
   if (animating) {
     frames++; slowAcc += dt;
     if (frames === 90) {
-      if (slowAcc / frames > 1 / 34 && dpr > 1) { dpr = Math.max(1, dpr - 0.25); renderer.setPixelRatio(dpr); resize(); }
+      if (slowAcc / frames > 1 / 34) {
+        if (aoOn) aoOn = false;
+        else if (dpr > 1) { dpr = Math.max(1, dpr - 0.25); renderer.setPixelRatio(dpr); resize(); }
+      }
       frames = 0; slowAcc = 0;
     }
   }
@@ -1218,7 +1407,7 @@ else scheduleRebuild(0);
 $('overlay').hidden = true;
 invalidate();
 window.__ready = true;
-window.__fidget = { state, look, cfg, meshes, renderer, camera, controls, invalidate, get running() { return running; } };
+window.__fidget = { state, look, cfg, meshes, renderer, camera, controls, invalidate, scene, gtao, setAO(on) { aoOn = on && !!composer; invalidate(); }, get running() { return running; } };
 </script>
 </body>
 </html>
