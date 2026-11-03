@@ -1,19 +1,19 @@
 // Mesh export helpers shared by the Node build and the in-browser configurator.
 
-// Printed parts and how they sit on the bed.
+// Printed parts: file name -> model part (and whether to flip it) for printing.
 export const PRINTS = {
   upper_housing: { part: 'upper',    flip: false, note: 'opaque · upright, no supports' },
   diffuser:      { part: 'diffuser', flip: false, note: 'frosted · upright, no supports' },
 };
 
-// Each part flat on the bed and centred.
+/** Each part flat on the bed and centred (optionally flipped 180° about X first). */
 export function printOriented(manifold, flip = false) {
   let m = flip ? manifold.rotate([180, 0, 0]) : manifold;
   const b = m.boundingBox();
   return m.translate([-(b.min[0] + b.max[0]) / 2, -(b.min[1] + b.max[1]) / 2, -b.min[2]]);
 }
 
-// Binary STL as an ArrayBuffer.
+/** Binary STL as an ArrayBuffer. */
 export function toStl(manifold, header = 'mx-fidget') {
   const { vertProperties: vp, triVerts: tv, numProp } = manifold.getMesh();
   const nTri = tv.length / 3;
@@ -35,7 +35,7 @@ export function toStl(manifold, header = 'mx-fidget') {
   return buf;
 }
 
-// Positions (xyz only, rounded to 1 µm) and indices for the viewer.
+/** Positions (xyz only, rounded to 1 µm) and indices for the viewer. */
 export function meshArrays(manifold) {
   const { vertProperties: vp, triVerts, numProp: n } = manifold.getMesh();
   const nv = vp.length / n;
@@ -45,7 +45,7 @@ export function meshArrays(manifold) {
   return { pos, idx };
 }
 
-// Numeric levels only (drops the helper functions) for serialising.
+/** Numeric levels only (drops the helper functions) for serialising. */
 export function numericLevels(L) {
   return Object.fromEntries(Object.entries(L).filter(([, v]) => typeof v === 'number').map(([k, v]) => [k, +v.toFixed(3)]));
 }

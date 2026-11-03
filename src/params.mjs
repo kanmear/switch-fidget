@@ -1,6 +1,11 @@
 // All dimensions in millimetres. X right, Y back ("north"), Z up. Centred on the switch axis.
 // Edit and run `npm run build` to regenerate the STLs and the preview.
 
+// Fixed clearances that are not meant to be tuned per build.
+const POST_CLEARANCE = 0.2; // extra gap between a coin cell's keep-out circle and the screw posts
+const BATT_HEADROOM = 0.3;  // air between the top of the cell and the PCB underside
+
+/** Default parameter set. Pass a modified copy (`{ ...P, battery: 'cr1632' }`) to the model builders. */
 export const P = {
   seg: 64,
 
@@ -77,14 +82,18 @@ export function cell(p = P) {
   const b = BATTERIES[p.battery];
   if (!b) throw new Error(`unknown battery '${p.battery}' (one of ${Object.keys(BATTERIES).join(', ')})`);
   if (b.kind === 'pouch') return { ...b, key: p.battery, cx: 0, cy: 0, h: b.size[2] };
-  const R = b.d / 2 + p.battClear + p.postD / 2 + 0.2; // keep-out radius around each screw post
+  const R = b.d / 2 + p.battClear + p.postD / 2 + POST_CLEARANCE; // keep-out radius around each screw post
   let cy = 0;
   for (const [sx, sy] of p.screwPos) if (R * R > sx * sx) cy = Math.max(cy, sy + Math.sqrt(R * R - sx * sx));
   return { ...b, key: p.battery, cx: 0, cy: +cy.toFixed(2), h: b.h + p.coinTabs };
 }
 
+/**
+ * Z levels and tapered-body helpers for a parameter set: Zb (PCB bottom / split plane), Zpcb, Zpt (plate top),
+ * Ztop (collar rim), plus `halfAt(z)` / `rAt(z)` for the half-width and corner radius of the outer skin.
+ */
 export function levels(p = P) {
-  const Zb = p.diffFloor + cell(p).h + 0.3 + p.underPcb; // PCB bottom = diffuser top = upper housing bottom
+  const Zb = p.diffFloor + cell(p).h + BATT_HEADROOM + p.underPcb; // PCB bottom = diffuser top = upper housing bottom
   const Zpcb = Zb + p.pcbThk;                            // PCB top = switch housing bottom
   const Zpt = Zpcb + p.switchBelowPlate;                 // plate top
   const Ztop = Zpt + p.collarAbovePlate;                 // collar rim
