@@ -357,7 +357,8 @@ const canvas = $('c');
 const stage = $('stage');
 let renderer;
 try {
-  renderer = new THREE.WebGLRenderer({ canvas, antialias: true, powerPreference: 'high-performance' });
+  // No canvas MSAA: the scene always goes through the composer (4x MSAA target) and the output pass draws one quad.
+  renderer = new THREE.WebGLRenderer({ canvas, antialias: false, powerPreference: 'high-performance' });
 } catch (e) {
   $('overlay').textContent = 'WebGL is not available in this browser, so the 3D preview cannot run.';
   throw e;
@@ -370,7 +371,29 @@ renderer.toneMapping = THREE.ACESFilmicToneMapping;
 renderer.outputColorSpace = THREE.SRGBColorSpace;
 renderer.shadowMap.enabled = true;
 renderer.shadowMap.type = THREE.PCFShadowMap; // filtered by the PCSS code below
+// The shadow map only changes when parts move, hide or are swapped, so it is redrawn on demand
+// (shadowDirty), not on every render call (the AO normal pass renders the scene a second time).
+renderer.shadowMap.autoUpdate = false;
+let shadowDirty = true;
 RectAreaLightUniformsLib.init();
+
+// Replace `from` with `to` in a shader string; a miss throws, so a three.js update can't turn a patch into a silent no-op.
+function patch(src, from, to, what = from) {
+  if (!src.includes(from)) { const msg = `Shader patch did not match: ${what}`; console.error(msg); throw new Error(msg); }
+  return src.replace(from, () => to);
+}
+
+// The diffuser's transmission buffer (every opaque object, re-rendered with 4x MSAA, then mipmapped, twice per
+// frame) is only ever sampled blurred, so it is drawn at a fraction of the canvas size. three r160 calls
+// getDrawingBufferSize only to size that target. The diffuser's shader compensates the blur level below.
+const TRANSMISSION_SCALE = 0.25;
+{
+  const getSize = renderer.getDrawingBufferSize.bind(renderer);
+  renderer.getDrawingBufferSize = (target) => {
+    getSize(target);
+    return target.set(Math.max(1, Math.floor(target.x * TRANSMISSION_SCALE)), Math.max(1, Math.floor(target.y * TRANSMISSION_SCALE)));
+  };
+}
 
 // Soft shadows (PCSS). The key light stands in for a large, diffuse studio light, so its shadows should
 // be sharp where a part touches what it shades and widen with distance, not keep a hard edge. three's
@@ -381,8 +404,8 @@ const KEY_SOFT = 0.1;                                      // tan of the light's
 const SHADOW_MAP = coarse ? 1024 : 2048;
 {
   const D = SHADOW_FAR - SHADOW_NEAR, W = 2 * SHADOW_R, f = (x) => x.toFixed(6);
-  THREE.ShaderChunk.shadowmap_pars_fragment = THREE.ShaderChunk.shadowmap_pars_fragment
-    .replace('float getShadow(', `
+  const sp = THREE.ShaderChunk.shadowmap_pars_fragment;
+  THREE.ShaderChunk.shadowmap_pars_fragment = patch(patch(patch(sp, 'float getShadow(', `
   #define PCSS_SCALE ${f(D * KEY_SOFT / W)}   // penumbra width in uv per unit of shadow depth
   #define PCSS_MAX ${f(7 / W)}                // widest penumbra searched: 7 mm
   #define PCSS_MIN ${f(1.2 / SHADOW_MAP)}
@@ -420,11 +443,21 @@ const SHADOW_MAP = coarse ? 1024 : 2048;
     float l = length( g );
     return l > PCSS_SLOPE ? g * ( PCSS_SLOPE / l ) : g;
   }
-  float getShadow(`)
-    .replace('bool frustumTest = inFrustum && shadowCoord.z <= 1.0;',
-             'bool frustumTest = inFrustum && shadowCoord.z <= 1.0;\n\t\tvec2 pcssG = pcssSlope( dFdx( shadowCoord.xyz ), dFdy( shadowCoord.xyz ) );')
-    .replace('if ( frustumTest ) {', 'if ( frustumTest ) {\n\t\t\treturn pcss( shadowMap, shadowCoord.xy, shadowCoord.z, pcssG );');
+  float getShadow(`),
+    'bool frustumTest = inFrustum && shadowCoord.z <= 1.0;',
+    'bool frustumTest = inFrustum && shadowCoord.z <= 1.0;\n\t\tvec2 pcssG = pcssSlope( dFdx( shadowCoord.xyz ), dFdy( shadowCoord.xyz ) );'),
+    'if ( frustumTest ) {',
+    'if ( frustumTest ) {\n\t\t\treturn pcss( shadowMap, shadowCoord.xy, shadowCoord.z, pcssG );');
 }
+// The wall area lights face outward from the diffuser and everything of the model sits behind their planes
+// (LTC_Evaluate returns 0 there), so the model's materials get a lighting chunk without the rect-light loop.
+// Only the floor, which lies in front of those planes, keeps it.
+const LIGHTS_NO_RECT = (() => {
+  const chunk = THREE.ShaderChunk.lights_fragment_begin;
+  const out = chunk.replace(/#if \( NUM_RECT_AREA_LIGHTS > 0 \) && defined\( RE_Direct_RectArea \)[\s\S]*?#pragma unroll_loop_end\s*#endif/, '');
+  if (out === chunk || out.includes('RE_Direct_RectArea')) { const msg = 'Shader patch did not match: rect-area light loop in lights_fragment_begin'; console.error(msg); throw new Error(msg); }
+  return out;
+})();
 const scene = new THREE.Scene();
 const pmrem = new THREE.PMREMGenerator(renderer);
 scene.environment = pmrem.fromScene(new RoomEnvironment(renderer), 0.04).texture;
@@ -526,6 +559,13 @@ M.diffuser.onBeforeCompile = (sh) => {
   sh.vertexShader = sh.vertexShader
     .replace('#include <common>', '#include <common>\nvarying vec3 vObjPos;')
     .replace('#include <begin_vertex>', '#include <begin_vertex>\nvObjPos = position;');
+  // The transmission buffer is TRANSMISSION_SCALE of the canvas: keep the same blur width on screen by
+  // lowering the mip level by log2(scale) (the stock level is log2(width) * roughness for the full-size buffer).
+  const transmissionPars = patch(THREE.ShaderChunk.transmission_pars_fragment,
+    'float lod = log2( transmissionSamplerSize.x ) * applyIorToRoughness( roughness, ior );',
+    `float lod = max( 0.0, log2( transmissionSamplerSize.x / ${TRANSMISSION_SCALE.toFixed(4)} ) * applyIorToRoughness( roughness, ior ) + ${Math.log2(TRANSMISSION_SCALE).toFixed(4)} );`,
+    'transmission lod');
+  sh.fragmentShader = patch(sh.fragmentShader, '#include <transmission_pars_fragment>', transmissionPars);
   sh.fragmentShader = sh.fragmentShader
     .replace('#include <common>', '#include <common>\nvarying vec3 vObjPos;\nuniform vec3 uLedPos[4];\nuniform vec3 uLedCol[4];')
     .replace('#include <emissivemap_fragment>', `#include <emissivemap_fragment>
@@ -574,6 +614,7 @@ for (const m of mats) {
   m.customProgramCacheKey = () => key; // keep each material's own shader hooks apart in the program cache
   m.onBeforeCompile = (sh, r) => {
     prev.call(m, sh, r);
+    sh.fragmentShader = patch(sh.fragmentShader, '#include <lights_fragment_begin>', LIGHTS_NO_RECT);
     sh.fragmentShader = sh.fragmentShader.replace('#include <opaque_fragment>', `#ifdef SECTION_CAP
         if (!gl_FrontFacing) outgoingLight = diffuseColor.rgb * 0.42 + totalEmissiveRadiance * 0.4;
       #endif
@@ -605,8 +646,9 @@ const PARTS = {
   battTab:    { mat: 'brass',    e: [0, 0, -0.75] },
   screws:     { mat: 'screw',    e: [0, 0, -2.3] },
 };
+const PART_LIST = Object.entries(PARTS);
 const meshes = {};
-for (const [k, p] of Object.entries(PARTS)) {
+for (const [k, p] of PART_LIST) {
   const m = new THREE.Mesh(DEFAULT_GEO[k], M[p.mat]);
   if (p.order) m.renderOrder = p.order;
   m.castShadow = true; m.receiveShadow = true;
@@ -961,6 +1003,7 @@ function setSection(on) {
   for (const m of [...mats, ...(gtao ? [gtao.normalMaterial] : [])]) { m.clippingPlanes = planes; m.needsUpdate = true; }
   for (const m of mats) if (on) m.defines.SECTION_CAP = ''; else delete m.defines.SECTION_CAP;
   pressedBtn($('section'), on); pressedBtn($('qSection'), on);
+  shadowDirty = true; // not needed while clipShadows is off, but cheap
   invalidate();
 }
 $('section').addEventListener('click', () => setSection(!sectionOn));
@@ -1026,7 +1069,7 @@ const dots = [];
 GROUPS.forEach((g, i) => {
   const row = document.createElement('label'); row.className = 'part';
   const cb = document.createElement('input'); cb.type = 'checkbox'; cb.checked = true; cb.id = 'part' + i;
-  cb.addEventListener('change', () => { g.keys.forEach(k => meshes[k].visible = cb.checked); invalidate(); });
+  cb.addEventListener('change', () => { g.keys.forEach(k => meshes[k].visible = cb.checked); shadowDirty = true; invalidate(); });
   const dot = document.createElement('span'); dot.className = 'dot'; dots.push([dot, g]);
   const name = document.createElement('span'); name.textContent = g.label;
   const tag = document.createElement('span'); tag.className = 'tag'; tag.textContent = g.tag;
@@ -1203,6 +1246,7 @@ function rebuild() {
 function swapGeometry(geos) {
   for (const g of customGeo) g.dispose();
   customGeo = [];
+  shadowDirty = true;
   for (const [k, m] of Object.entries(meshes)) {
     m.geometry = geos[k];
     if (geos[k] !== DEFAULT_GEO[k]) customGeo.push(geos[k]);
@@ -1275,10 +1319,24 @@ function resize() {
 new ResizeObserver(resize).observe(stage);
 
 const base = new THREE.Color(), ledDir = new THREE.Vector3();
-let frames = 0, slowAcc = 0;
+// Ambient animation (auto-rotate, the animated light) is slow enough to look the same at 30 fps, so it renders at
+// half rate; anything the viewer drives (orbit, tweens, presses, controls) renders at the display rate.
+let ambientMs = 1000 / 30 - 2;                 // minimum gap between renders while only ambient motion runs
+let lastRender = -1e9, lastRaf = 0, lastInteractive = true, interactiveUntil = 0, vsync = 1000 / 60;
+let frames = 0, slowAcc = 0, expectedAcc = 0;
+controls.addEventListener('start', () => { interactiveUntil = Infinity; }); // pointer held, or a wheel step: render at full rate
+controls.addEventListener('end', () => { interactiveUntil = performance.now() + 700; }); // keep going while damping coasts
 function lightAnimated() { return look.mode === 'breathe' || look.mode === 'rainbow' || look.mode === 'spin' || (look.mode === 'reactive' && (state.flash > 0.001)); }
 function frame(now) {
-  const dt = Math.min(0.05, (now - last) / 1000); last = now;
+  if (now - lastRaf > 0 && now - lastRaf < 100) vsync = Math.min(vsync, now - lastRaf);
+  lastRaf = now;
+  if (!needsRender && !lastInteractive && now > interactiveUntil && now - lastRender < ambientMs) {
+    // Ambient motion only and the last render was recent: skip this tick, keep the loop going.
+    if (onScreen && !document.hidden) requestAnimationFrame(frame); else running = false;
+    return;
+  }
+  const rawDt = (now - last) / 1000;
+  const dt = Math.min(0.05, rawDt); last = now;
   state.t += dt * look.speed;
   const t = state.t;
   const k = reduceMotion ? 1 : 1 - Math.exp(-dt * 10);
@@ -1308,10 +1366,10 @@ function frame(now) {
     moving = true;
   }
   const ex = state.explode * EXPLODE_MM;
-  for (const [key, p] of Object.entries(PARTS)) {
-    const m = meshes[key];
-    m.position.set(p.e[0] * ex, p.e[1] * ex, p.e[2] * ex - (p.press ? state.press * PR.travel : 0));
-    m.updateMatrix();
+  for (const [key, p] of PART_LIST) {
+    const m = meshes[key], x = p.e[0] * ex, y = p.e[1] * ex, z = p.e[2] * ex - (p.press ? state.press * PR.travel : 0);
+    if (m.position.x === x && m.position.y === y && m.position.z === z) continue;
+    m.position.set(x, y, z); m.updateMatrix(); shadowDirty = true;
   }
 
   // light
@@ -1373,22 +1431,26 @@ function frame(now) {
 
   const camChanged = controls.update(dt);
   const animating = moving || camChanged || controls.autoRotate || lightAnimated();
+  const fastSpin = look.mode === 'spin' && look.speed > 1.5;
+  lastInteractive = moving || now <= interactiveUntil || (camChanged && !controls.autoRotate) || fastSpin;
   if (needsRender || animating) {
-    fitShadow();
-    if (aoOn) composer.render(dt); else renderer.render(scene, camera);
-    needsRender = false;
-  }
+    if (shadowDirty) { fitShadow(); renderer.shadowMap.needsUpdate = true; shadowDirty = false; }
+    if (composer) { gtao.enabled = aoOn; composer.render(dt); } else renderer.render(scene, camera);
+    needsRender = false; lastRender = now;
 
-  // Adaptive quality: if sustained animation runs slow, drop the ambient occlusion first, then lower the
-  // pixel ratio a step at a time (never below 1).
-  if (animating) {
-    frames++; slowAcc += dt;
-    if (frames === 90) {
-      if (slowAcc / frames > 1 / 34) {
-        if (aoOn) aoOn = false;
-        else if (dpr > 1) { dpr = Math.max(1, dpr - 0.25); renderer.setPixelRatio(dpr); resize(); }
+    // Adaptive quality: if sustained animation runs slow, drop the ambient occlusion first, then lower the
+    // pixel ratio a step at a time (never below 1). Only rendered frames count, against the interval they
+    // were due at (the display's frame time, or the ambient cap), so a display that is itself locked to
+    // 30 fps (battery saver) or the ambient cap are not mistaken for a slow GPU.
+    if (animating) {
+      frames++; slowAcc += Math.min(0.25, rawDt); expectedAcc += (lastInteractive ? vsync : Math.max(vsync, ambientMs)) / 1000;
+      if (frames === 90) {
+        if (slowAcc / frames > Math.max(1.5 * expectedAcc / frames, 1 / 34)) {
+          if (aoOn) aoOn = false;
+          else if (dpr > 1) { dpr = Math.max(1, dpr - 0.25); renderer.setPixelRatio(dpr); resize(); }
+        }
+        frames = 0; slowAcc = 0; expectedAcc = 0;
       }
-      frames = 0; slowAcc = 0;
     }
   }
   if (animating && onScreen && !document.hidden) requestAnimationFrame(frame);
@@ -1407,7 +1469,7 @@ else scheduleRebuild(0);
 $('overlay').hidden = true;
 invalidate();
 window.__ready = true;
-window.__fidget = { state, look, cfg, meshes, renderer, camera, controls, invalidate, scene, gtao, setAO(on) { aoOn = on && !!composer; invalidate(); }, get running() { return running; } };
+window.__fidget = { state, look, cfg, meshes, renderer, camera, controls, invalidate, scene, gtao, setAO(on) { aoOn = on && !!composer; invalidate(); }, setAmbientCap(ms) { ambientMs = ms; }, get running() { return running; } };
 </script>
 </body>
 </html>
