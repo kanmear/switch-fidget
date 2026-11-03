@@ -5,7 +5,7 @@ import { mkdirSync, writeFileSync, readFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { P, BATTERIES } from '../src/params.mjs';
-import { runChecks } from '../src/checks.mjs';
+import { runChecks, summarizeChecks } from '../src/checks.mjs';
 import { PRINTS, printOriented, toStl, meshArrays, numericLevels } from '../src/export.mjs';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
@@ -33,8 +33,12 @@ for (const [name, s] of Object.entries(PRINTS)) {
 }
 
 // ---------- worker bundle for the in-browser configurator ----------
-// A deliberately tiny bundler: inlines relative ES-module imports (single-line `import { a, b as c } from './x.mjs'`)
-// into one scope and points bare manifold-3d imports at the CDN. Keeps src/ the single source of truth.
+// A deliberately tiny bundler: inlines relative ES-module imports into one scope and points manifold-3d imports at the CDN.
+// Keeps src/ the single source of truth. Constraints on the bundled files (violations throw instead of emitting broken code):
+//   - imports are single-line: `import { a, b as c } from './x.mjs';` (relative, named) or `import X from 'manifold-3d/...';`
+//   - exports are `export const|function|let|class|async ...` declarations (the `export` keyword is stripped);
+//     `export { ... }`, `export default` and `export * from` are not supported
+//   - top-level names must be unique across all bundled files, because they share one scope
 function bundle(entry) {
   const seen = new Set(), out = [], head = [];
   (function visit(file) {
@@ -44,7 +48,12 @@ function bundle(entry) {
     const body = [];
     for (const line of lines) {
       const m = line.match(/^import\s+(.+?)\s+from\s+'([^']+)';\s*$/);
-      if (!m) { body.push(line.replace(/^export\s+(?=(const|function|let|class|async)\b)/, '')); continue; }
+      if (!m) {
+        if (/^import[\s{*]/.test(line)) throw new Error(`bundle: unsupported import syntax (${file}: ${line})`);
+        if (/^export\s+(\{|default\b|\*)/.test(line)) throw new Error(`bundle: unsupported export syntax (${file}: ${line})`);
+        body.push(line.replace(/^export\s+(?=(const|function|let|class|async)\b)/, ''));
+        continue;
+      }
       const [, what, from] = m;
       if (from.startsWith('.')) {
         visit(resolve(dirname(file), from));
@@ -78,7 +87,7 @@ const data = {
   params: P,
   batteries: BATTERIES,
   prints: PRINTS,
-  checks: { clean: checks.ok, problems: checks.problems, pairs: checks.pairs, keycapGap: +checks.keycapGap.toFixed(2), pcbWall: +checks.pcbWall.toFixed(2) },
+  checks: summarizeChecks(checks),
 };
 const tpl = readFileSync(join(root, 'preview', 'template.html'), 'utf8');
 const html = tpl
