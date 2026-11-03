@@ -309,7 +309,7 @@ let PR = { ...DEFAULT_P }, L = { ...D.levels }, CELL = D.cell, CHECKS = D.checks
 const STORE = 'mx-fidget:v2';
 const DEFAULT_LOOK = { mode: 'rainbow', color: '#39c6f0', bright: 0.8, speed: 1, top: '#2b2e35', cap: '#2a2c31', dif: '#f4f3ef',
                        sw: 'linear', sound: true, volume: 0.6, haptic: true, spin: !reduceMotion,
-                       floor: true, ground: 'desk', topFin: 'matte', capFin: 'pbt' };
+                       floor: true, ground: 'slate', topFin: 'matte', capFin: 'pbt' };
 const CONFIG_KEYS = ['battery', 'keycapBottomAbovePlate', 'collarAbovePlate', 'collarInner', 'plateCut', 'baseSize', 'seg'];
 const DEFAULT_CFG = Object.fromEntries(CONFIG_KEYS.map(k => [k, DEFAULT_P[k]]));
 let saved = {};
@@ -324,6 +324,7 @@ for (const [k, v] of new URLSearchParams(location.hash.slice(1))) {
 }
 if (!(cfg.battery in D.batteries)) cfg.battery = DEFAULT_CFG.battery;
 if (look.dif === '#8e9aa3') look.dif = DEFAULT_LOOK.dif; // the old grey default; the diffuser is now white plastic
+look.ground = { desk: 'slate', oak: 'walnut' }[look.ground] || look.ground; // the light floors became dark ones
 let saveTimer = 0;
 function save() {
   clearTimeout(saveTimer);
@@ -523,8 +524,8 @@ const floorFade = canvasTex(256, 256, (g, w) => {
   r.addColorStop(0, '#fff'); r.addColorStop(0.3, '#fff'); r.addColorStop(1, '#000');
   g.fillStyle = r; g.fillRect(0, 0, w, w);
 });
-// Procedural oak: long, gently curving grain with fine pores and a plank seam.
-const oakTex = canvasTex(512, 512, (g, w, h) => {
+// Procedural walnut: long, gently curving grain with fine pores and a plank seam.
+const walnutTex = canvasTex(512, 512, (g, w, h) => {
   const img = g.createImageData(w, h), d = img.data;
   const hash = (n) => { const x = Math.sin(n * 127.1) * 43758.5453; return x - Math.floor(x); };
   const colNoise = Array.from({ length: w }, (_, x) => hash(x + 0.5));
@@ -535,21 +536,22 @@ const oakTex = canvasTex(512, 512, (g, w, h) => {
       const pore = colNoise[x] > 0.86 && hash(Math.floor(y / 6) * 31.7 + x) > 0.3 ? 0.18 : 0;
       const t = Math.pow(ring, 4) * 0.5 + colNoise[(x * 7) % w] * 0.1 + pore + (x % 256 < 2 ? 0.45 : 0);
       const i = (y * w + x) * 4;
-      d[i] = 205 - 82 * t; d[i + 1] = 160 - 70 * t; d[i + 2] = 110 - 52 * t; d[i + 3] = 255;
+      d[i] = 92 - 50 * t; d[i + 1] = 62 - 36 * t; d[i + 2] = 44 - 27 * t; d[i + 3] = 255;
     }
   }
   g.putImageData(img, 0, 0);
 });
-oakTex.colorSpace = THREE.SRGBColorSpace;
-oakTex.wrapS = oakTex.wrapT = THREE.RepeatWrapping; oakTex.repeat.set(4, 4); oakTex.rotation = 0.35;
-oakTex.anisotropy = renderer.capabilities.getMaxAnisotropy();
+walnutTex.colorSpace = THREE.SRGBColorSpace;
+walnutTex.wrapS = walnutTex.wrapT = THREE.RepeatWrapping; walnutTex.repeat.set(4, 4); walnutTex.rotation = 0.35;
+walnutTex.anisotropy = renderer.capabilities.getMaxAnisotropy();
 const FLOORS = [
-  ['desk', 'White desk', { color: 0xe7e4dd, map: null, roughness: 0.72, clearcoat: 0, sheen: 0 }],
-  ['oak', 'Oak', { color: 0xffffff, map: oakTex, roughness: 0.48, clearcoat: 0.35, clearcoatRoughness: 0.25, sheen: 0 }],
-  ['felt', 'Felt mat', { color: 0x2c2f35, map: null, roughness: 1, clearcoat: 0, sheen: 1, sheenRoughness: 0.8 }],
+  // All dark on purpose: a pale floor reflects so much room light that the LED spill disappears.
+  ['slate', 'Slate desk', { color: 0x2b2e33, map: null, roughness: 0.7, clearcoat: 0, sheen: 0 }],
+  ['walnut', 'Walnut', { color: 0xffffff, map: walnutTex, roughness: 0.45, clearcoat: 0.4, clearcoatRoughness: 0.22, sheen: 0 }],
+  ['felt', 'Felt mat', { color: 0x16171a, map: null, roughness: 1, clearcoat: 0, sheen: 1, sheenRoughness: 0.8 }],
   ['gloss', 'Glossy black', { color: 0x0e0f11, map: null, roughness: 0.1, clearcoat: 1, clearcoatRoughness: 0.03, sheen: 0 }],
 ];
-const floorMat = new THREE.MeshPhysicalMaterial({ alphaMap: floorFade, transparent: true, depthWrite: true, sheenColor: 0x8a8f99 });
+const floorMat = new THREE.MeshPhysicalMaterial({ alphaMap: floorFade, transparent: true, depthWrite: true, sheenColor: 0x4a4e56 });
 const floor = new THREE.Mesh(new THREE.CircleGeometry(260, 96), floorMat);
 floor.receiveShadow = true; floor.renderOrder = -1;
 // Soft contact shadow: the key light alone leaves the base looking like it floats.
