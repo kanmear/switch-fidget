@@ -298,7 +298,7 @@ let PR = { ...DEFAULT_P }, L = { ...D.levels }, CELL = D.cell, CHECKS = D.checks
 
 // ---------- settings (persisted per viewer; the share link carries them too) ----------
 const STORE = 'mx-fidget:v2';
-const DEFAULT_LOOK = { mode: 'rainbow', color: '#39c6f0', bright: 0.8, speed: 1, top: '#2b2e35', cap: '#2a2c31', dif: '#8e9aa3',
+const DEFAULT_LOOK = { mode: 'rainbow', color: '#39c6f0', bright: 0.8, speed: 1, top: '#2b2e35', cap: '#2a2c31', dif: '#f4f3ef',
                        sw: 'linear', sound: true, volume: 0.6, haptic: true, spin: !reduceMotion };
 const CONFIG_KEYS = ['battery', 'keycapBottomAbovePlate', 'collarAbovePlate', 'collarInner', 'plateCut', 'baseSize', 'seg'];
 const DEFAULT_CFG = Object.fromEntries(CONFIG_KEYS.map(k => [k, DEFAULT_P[k]]));
@@ -313,6 +313,7 @@ for (const [k, v] of new URLSearchParams(location.hash.slice(1))) {
   else if (k in DEFAULT_LOOK) look[k] = typeof DEFAULT_LOOK[k] === 'number' ? +v : typeof DEFAULT_LOOK[k] === 'boolean' ? v === '1' : v;
 }
 if (!(cfg.battery in D.batteries)) cfg.battery = DEFAULT_CFG.battery;
+if (look.dif === '#8e9aa3') look.dif = DEFAULT_LOOK.dif; // the old grey default; the diffuser is now white plastic
 let saveTimer = 0;
 function save() {
   clearTimeout(saveTimer);
@@ -379,7 +380,10 @@ function mat(opts, physical = false) {
 }
 const M = {
   top: mat({ color: look.top, roughness: 0.62, metalness: 0.0 }),
-  diffuser: mat({ color: look.dif, roughness: 0.6, envMapIntensity: 0.25, transparent: true, opacity: 0.7, depthWrite: false, emissive: 0x000000 }, true),
+  // Frosted white plastic: mostly-diffuse with rough transmission, so the inside shows only as a soft blur.
+  diffuser: mat({ color: look.dif, roughness: 0.5, transmission: 0.55, thickness: 1.8, ior: 1.5,
+                  attenuationColor: look.dif, attenuationDistance: 2.5, sheen: 0.4, sheenRoughness: 0.8,
+                  sheenColor: 0xffffff, envMapIntensity: 0.6, specularIntensity: 0.4 }, true),
   housing: mat({ color: 0x3a3d44, roughness: 0.35, transparent: true, opacity: 0.88 }),
   stem: mat({ color: 0xc8242b, roughness: 0.5 }),
   keycap: mat({ color: look.cap, roughness: 0.78 }),
@@ -390,6 +394,32 @@ const M = {
   brass: mat({ color: 0xc9a14a, roughness: 0.3, metalness: 0.9 }),
   led: mat({ color: 0xffffff, roughness: 0.3, emissive: 0xffffff, emissiveIntensity: 1 }),
   screw: mat({ color: 0x4a4d55, roughness: 0.35, metalness: 0.85 }),
+};
+
+// Light scattered inside the diffuser: each down-facing LED adds a soft hotspot plus an even fill, and
+// grazing angles glow more (a longer path through the plastic). Everything is zero when the light is off.
+const difGlow = {
+  uLedPos: { value: Array.from({ length: 4 }, () => new THREE.Vector3()) },
+  uLedCol: { value: Array.from({ length: 4 }, () => new THREE.Color(0, 0, 0)) },
+};
+M.diffuser.onBeforeCompile = (sh) => {
+  Object.assign(sh.uniforms, difGlow);
+  sh.vertexShader = sh.vertexShader
+    .replace('#include <common>', '#include <common>\nvarying vec3 vObjPos;')
+    .replace('#include <begin_vertex>', '#include <begin_vertex>\nvObjPos = position;');
+  sh.fragmentShader = sh.fragmentShader
+    .replace('#include <common>', '#include <common>\nvarying vec3 vObjPos;\nuniform vec3 uLedPos[4];\nuniform vec3 uLedCol[4];')
+    .replace('#include <emissivemap_fragment>', `#include <emissivemap_fragment>
+      {
+        vec3 glow = vec3(0.0);
+        for (int i = 0; i < 4; i++) {
+          vec3 d = vObjPos - uLedPos[i];
+          glow += uLedCol[i] * (0.12 + 1.0 / (1.0 + dot(d, d) / 22.0));
+        }
+        float graze = 1.0 - abs(dot(normal, normalize(vViewPosition)));
+        // A tinted diffuser filters the light passing through it.
+        totalEmissiveRadiance += glow * mix(vec3(1.0), diffuseColor.rgb, 0.75) * (0.75 + 0.7 * graze * graze);
+      }`);
 };
 
 // ---------- parts ----------
@@ -419,7 +449,7 @@ for (const [k, p] of Object.entries(PARTS)) {
 }
 const GROUPS = [
   { label: 'Upper housing', keys: ['upper'], color: () => M.top.color, tag: 'print · opaque' },
-  { label: 'Diffuser', keys: ['diffuser'], color: () => M.diffuser.color.clone().lerp(new THREE.Color(0xffffff), 0.5), tag: 'print · frosted' },
+  { label: 'Diffuser', keys: ['diffuser'], color: () => new THREE.Color(look.dif).lerp(new THREE.Color(0xffffff), 0.5), tag: 'print · frosted' },
   { label: 'Switch & keycap', keys: ['switch', 'stem', 'keycap'], color: () => M.keycap.color, tag: 'ref' },
   { label: 'PCB & socket', keys: ['pcb', 'socket', 'usb', 'chips'], color: () => M.pcb.color, tag: 'ref' },
   { label: 'LEDs', keys: ['ledsBottom', 'ledsHalo'], color: () => new THREE.Color(0xffffff), tag: 'ref' },
@@ -452,7 +482,7 @@ const MODES = [['off', 'Off'], ['static', 'Static'], ['breathe', 'Breathe'], ['r
 const GLOW_COLORS = [['#39c6f0', 'Ice'], ['#9b5cff', 'Violet'], ['#ff4d6d', 'Rose'], ['#ffb238', 'Amber'], ['#57e389', 'Mint'], ['#ffffff', 'White']];
 const TOP_COLORS = [['#2b2e35', 'Graphite'], ['#ebe7dd', 'Bone'], ['#d9542b', 'Signal orange'], ['#2f6f73', 'Teal'], ['#7d5cc6', 'Lilac']];
 const CAP_COLORS = [['#2a2c31', 'Black'], ['#e9e6dc', 'Cream PBT'], ['#d9542b', 'Orange'], ['#8fb8de', 'Sky'], ['#f2d36b', 'Butter']];
-const DIF_COLORS = [['#8e9aa3', 'Natural'], ['#d8dde2', 'Milky'], ['#5c6670', 'Smoke'], ['#7fb0d6', 'Ice'], ['#d6a0b8', 'Blush']];
+const DIF_COLORS = [['#f4f3ef', 'White'], ['#cdd4d9', 'Natural'], ['#5c6670', 'Smoke'], ['#a9cfe8', 'Ice'], ['#ecc3d3', 'Blush']];
 const SWITCHES = [['linear', 'Linear', '#c8242b'], ['tactile', 'Tactile', '#7a4b2a'], ['clicky', 'Clicky', '#2a6fd6'], ['silent', 'Silent', '#3a3d44']];
 const VIEWS = [['iso', 'Iso', [-58, -92, 60]], ['top', 'Top', [0, -0.01, 125]], ['front', 'Front', [0, -120, 14]], ['side', 'Side', [120, 0, 14]]];
 
@@ -671,7 +701,7 @@ slider('bright', 'bright', (v) => `${Math.round(v * 100)}%`);
 slider('speed', 'speed', (v) => `${fmt(v, 2)}×`);
 swatches($('topSw'), TOP_COLORS, () => look.top, (h) => { look.top = h; M.top.color.set(h); refreshDots(); save(); invalidate(); }, 'top');
 swatches($('capSw'), CAP_COLORS, () => look.cap, (h) => { look.cap = h; M.keycap.color.set(h); refreshDots(); save(); invalidate(); }, 'cap');
-swatches($('difSw'), DIF_COLORS, () => look.dif, (h) => { look.dif = h; M.diffuser.color.set(h); refreshDots(); save(); invalidate(); }, 'dif');
+swatches($('difSw'), DIF_COLORS, () => look.dif, (h) => { look.dif = h; M.diffuser.attenuationColor.set(h); refreshDots(); save(); invalidate(); }, 'dif');
 
 // ---------- Parts ----------
 const partsEl = $('parts');
@@ -925,7 +955,7 @@ function resize() {
 }
 new ResizeObserver(resize).observe(stage);
 
-const tmp = new THREE.Color(), base = new THREE.Color(), lc = new THREE.Color();
+const base = new THREE.Color();
 let frames = 0, slowAcc = 0;
 function lightAnimated() { return look.mode === 'breathe' || look.mode === 'rainbow' || look.mode === 'spin' || (look.mode === 'reactive' && (state.flash > 0.001)); }
 function frame(now) {
@@ -977,14 +1007,24 @@ function frame(now) {
   state.flash = Math.max(state.pressTarget ? 1 : 0, state.flash - dt * 1.1 * look.speed);
   level *= look.bright;
   const spinPhase = t * 2.4;
-  tmp.copy(base).multiplyScalar(1.5 * level * (look.mode === 'spin' ? 0.55 : 1));
-  M.diffuser.emissive.copy(tmp);
-  M.led.emissive.copy(base); M.led.emissiveIntensity = 0.15 + 2.2 * level;
+  // Off means off: the LEDs show as plain white parts and nothing picks up the chosen colour.
+  if (level > 0) { M.led.emissive.copy(base); M.led.emissiveIntensity = 0.15 + 2.2 * level; }
+  else M.led.emissive.setRGB(0, 0, 0);
+  const spinS = (angle) => 0.08 + 0.92 * Math.pow(Math.max(0, Math.cos(angle - spinPhase)), 3) * 1.6;
+  const fade = 1 - 0.6 * state.explode;
+  // A lit diffuser outshines the room light it reflects, so let the plastic's own white recede as the
+  // light rises; otherwise the glow washes out to pastel.
+  M.diffuser.color.set(look.dif).multiplyScalar(1 - 0.6 * Math.min(1, level * fade * 1.3));
+  for (let i = 0; i < 4; i++) {
+    const [x, y] = PR.ledsBottom[i] || [0, 0];
+    difGlow.uLedPos.value[i].set(x, y, L.Zb);
+    const s = look.mode === 'spin' ? spinS(Math.atan2(y, x)) : 1;
+    difGlow.uLedCol.value[i].copy(base).multiplyScalar(2.4 * s * level * fade);
+  }
   for (const l of glowLights) {
-    let s = 1;
-    if (look.mode === 'spin' && l.userData.k !== 'switch') s = 0.08 + 0.92 * Math.pow(Math.max(0, Math.cos(l.userData.angle - spinPhase)), 3) * 1.6;
+    const s = look.mode === 'spin' && l.userData.k !== 'switch' ? spinS(l.userData.angle) : 1;
     l.color.copy(base);
-    l.intensity = s * level * (l.userData.k === 'body' ? 260 : l.userData.k === 'switch' ? 120 : 40) * (1 - 0.6 * state.explode);
+    l.intensity = s * level * (l.userData.k === 'body' ? 140 : l.userData.k === 'switch' ? 120 : 40) * fade;
   }
 
   const camChanged = controls.update(dt);
