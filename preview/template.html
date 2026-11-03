@@ -495,22 +495,77 @@ function fitShadow() {
 
 // Ambient occlusion (screen-space GTAO): darkens creases, the well, the USB mouth and the contact with
 // the floor, which the room light alone can't. Dropped first if the GPU can't keep up.
-let composer = null, gtao = null, aoOn = true;
+// The AO result is reused until the camera, the geometry or the size changes (aoDirty), and it is multiplied into
+// the image by the output pass (see below), so the composer never needs its second full-size target.
+let composer = null, gtao = null, outputPass = null, aoOn = true, aoDirty = true;
+const aoCamera = new Array(32).fill(NaN);
+function cameraMoved() {
+  camera.updateMatrixWorld();
+  const w = camera.matrixWorld.elements, p = camera.projectionMatrix.elements;
+  let moved = false;
+  // OrbitControls rebuilds the position from spherical coordinates on every update, which can wobble in the
+  // last bits of a float; only a real change counts (the reference is only replaced by one).
+  for (let i = 0; i < 16; i++) {
+    if (!(Math.abs(aoCamera[i] - w[i]) < 1e-6) || !(Math.abs(aoCamera[16 + i] - p[i]) < 1e-6)) moved = true;
+  }
+  if (moved) for (let i = 0; i < 16; i++) { aoCamera[i] = w[i]; aoCamera[16 + i] = p[i]; }
+  return moved;
+}
+function setAO(on) { on = on && !!composer; if (on && !aoOn) aoDirty = true; aoOn = on; invalidate(); }
 try {
   composer = new EffectComposer(renderer, new THREE.WebGLRenderTarget(1, 1, { type: THREE.HalfFloatType, samples: 4 }));
   composer.addPass(new RenderPass(scene, camera));
   gtao = new GTAOPass(scene, camera, 1, 1);
   gtao.updateGtaoMaterial({ radius: 4, distanceExponent: 1.2, thickness: 3, distanceFallOff: 1, scale: 1.4, samples: 16 });
-  gtao.updatePdMaterial({ lumaPhi: 10, depthPhi: 2, normalPhi: 3, radius: 5, rings: 2, samples: 16 });
+  const PD_RADIUS = 5;
+  gtao.updatePdMaterial({ lumaPhi: 10, depthPhi: 2, normalPhi: 3, radius: PD_RADIUS, rings: 2, samples: 16 });
   gtao.blendIntensity = 1;
   gtao.normalMaterial.side = THREE.DoubleSide;
+  // On a high-density screen the AO is computed at CSS-pixel resolution (it is soft anyway) and sampled
+  // bilinearly. At a pixel ratio of 1 the full resolution stays: halving it there was visible.
+  const aoSetSize = gtao.setSize.bind(gtao);
+  gtao.setSize = (w, h) => {
+    const k = 1 / Math.max(1, dpr);
+    aoSetSize(Math.max(1, Math.round(w * k)), Math.max(1, Math.round(h * k)));
+    gtao.pdMaterial.uniforms.radius.value = PD_RADIUS * k; // the denoise radius is in AO pixels: keep its size on screen
+    aoDirty = true;
+  };
+  // Only the normal, AO and denoise passes of GTAOPass.render: skipped while the result is still valid, and
+  // without its copy and blend passes (the output pass multiplies the AO in).
+  gtao.needsSwap = false;
+  gtao.render = function (renderer) {
+    if (!aoOn || !aoDirty) return;
+    aoDirty = false;
+    this.overrideVisibility();
+    this.renderOverride(renderer, this.normalMaterial, this.normalRenderTarget, 0x7777ff, 1.0);
+    this.restoreVisibility();
+    const u = this.gtaoMaterial.uniforms;
+    u.cameraNear.value = this.camera.near;
+    u.cameraFar.value = this.camera.far;
+    u.cameraProjectionMatrix.value.copy(this.camera.projectionMatrix);
+    u.cameraProjectionMatrixInverse.value.copy(this.camera.projectionMatrixInverse);
+    u.cameraWorldMatrix.value.copy(this.camera.matrixWorld);
+    this.renderPass(renderer, this.gtaoMaterial, this.gtaoRenderTarget, 0xffffff, 1.0);
+    this.pdMaterial.uniforms.cameraProjectionMatrixInverse.value.copy(this.camera.projectionMatrixInverse);
+    this.renderPass(renderer, this.pdMaterial, this.pdRenderTarget, 0xffffff, 1.0);
+  };
   // The floor stays out of the occlusion pass: GTAO darkens the final colour, glow included, so it would
   // put a dark band in the diffuser's spill right where it is brightest. The floor shader does its own
   // contact occlusion, on the room light only.
   const ov = gtao.overrideVisibility.bind(gtao);
   gtao.overrideVisibility = () => { ov(); floorGroup.visible = false; }; // restoreVisibility puts it back
   composer.addPass(gtao);
-  composer.addPass(new OutputPass());
+  // The output pass applies the occlusion before tone mapping, exactly like GTAOPass's own blend pass would.
+  // Uniforms, not defines: OutputPass rebuilds its defines on its first render.
+  outputPass = new OutputPass();
+  outputPass.uniforms.tAO = { value: gtao.pdRenderTarget.texture };
+  outputPass.uniforms.aoIntensity = { value: 1 };
+  outputPass.material.fragmentShader = patch(patch(outputPass.material.fragmentShader,
+    'uniform sampler2D tDiffuse;', 'uniform sampler2D tDiffuse;\n\t\tuniform sampler2D tAO;\n\t\tuniform float aoIntensity;', 'OutputShader uniforms'),
+    'gl_FragColor = texture2D( tDiffuse, vUv );',
+    'gl_FragColor = texture2D( tDiffuse, vUv );\n\t\t\tif ( aoIntensity > 0.0 ) gl_FragColor.rgb *= mix( vec3( 1.0 ), texture2D( tAO, vUv ).rgb, aoIntensity );', 'OutputShader colour read');
+  outputPass.needsSwap = false; // the scene always renders into the read buffer: the write buffer is never used or allocated
+  composer.addPass(outputPass);
 } catch (e) { console.warn('Ambient occlusion is unavailable:', e); composer = null; aoOn = false; }
 
 function applyStageColor() { scene.background = new THREE.Color(getComputedStyle(stage).getPropertyValue('--stage').trim()); invalidate(); }
@@ -1434,8 +1489,12 @@ function frame(now) {
   const fastSpin = look.mode === 'spin' && look.speed > 1.5;
   lastInteractive = moving || now <= interactiveUntil || (camChanged && !controls.autoRotate) || fastSpin;
   if (needsRender || animating) {
-    if (shadowDirty) { fitShadow(); renderer.shadowMap.needsUpdate = true; shadowDirty = false; }
-    if (composer) { gtao.enabled = aoOn; composer.render(dt); } else renderer.render(scene, camera);
+    if (shadowDirty) { fitShadow(); renderer.shadowMap.needsUpdate = true; shadowDirty = false; aoDirty = true; }
+    if (composer) {
+      if (cameraMoved()) aoDirty = true;
+      outputPass.uniforms.aoIntensity.value = aoOn ? 1 : 0;
+      composer.render(dt);
+    } else renderer.render(scene, camera);
     needsRender = false; lastRender = now;
 
     // Adaptive quality: if sustained animation runs slow, drop the ambient occlusion first, then lower the
@@ -1469,7 +1528,7 @@ else scheduleRebuild(0);
 $('overlay').hidden = true;
 invalidate();
 window.__ready = true;
-window.__fidget = { state, look, cfg, meshes, renderer, camera, controls, invalidate, scene, gtao, setAO(on) { aoOn = on && !!composer; invalidate(); }, setAmbientCap(ms) { ambientMs = ms; }, get running() { return running; } };
+window.__fidget = { state, look, cfg, meshes, renderer, camera, controls, invalidate, scene, gtao, composer, setAO, setAmbientCap(ms) { ambientMs = ms; }, get running() { return running; } };
 </script>
 </body>
 </html>
