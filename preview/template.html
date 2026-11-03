@@ -6,6 +6,7 @@
 <title>MX Switch Fidget</title>
 <meta name="description" content="A hot-swap Cherry MX switch fidget with a frosted LED diffuser. Interactive 3D preview and in-browser configurator with STL export.">
 <meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://cdn.jsdelivr.net" crossorigin>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wdth,wght@100..125,400..800&family=JetBrains+Mono:wght@400;600&display=swap">
@@ -285,10 +286,27 @@
 </script>
 <script type="importmap">
 { "imports": {
-  "three": "__THREE_CDN__/build/three.module.js",
+  "three": "__THREE_CDN__/build/three.module.min.js",
   "three/addons/": "__THREE_CDN__/examples/jsm/"
 } }
 </script>
+<!-- Fetch the whole module graph at once instead of one import level at a time (after the import map: a module fetched before it would ignore it). -->
+<link rel="modulepreload" href="__THREE_CDN__/build/three.module.min.js">
+<link rel="modulepreload" href="__THREE_CDN__/examples/jsm/controls/OrbitControls.js">
+<link rel="modulepreload" href="__THREE_CDN__/examples/jsm/environments/RoomEnvironment.js">
+<link rel="modulepreload" href="__THREE_CDN__/examples/jsm/lights/RectAreaLightUniformsLib.js">
+<link rel="modulepreload" href="__THREE_CDN__/examples/jsm/postprocessing/EffectComposer.js">
+<link rel="modulepreload" href="__THREE_CDN__/examples/jsm/postprocessing/RenderPass.js">
+<link rel="modulepreload" href="__THREE_CDN__/examples/jsm/postprocessing/GTAOPass.js">
+<link rel="modulepreload" href="__THREE_CDN__/examples/jsm/postprocessing/OutputPass.js">
+<link rel="modulepreload" href="__THREE_CDN__/examples/jsm/postprocessing/Pass.js">
+<link rel="modulepreload" href="__THREE_CDN__/examples/jsm/postprocessing/ShaderPass.js">
+<link rel="modulepreload" href="__THREE_CDN__/examples/jsm/postprocessing/MaskPass.js">
+<link rel="modulepreload" href="__THREE_CDN__/examples/jsm/shaders/CopyShader.js">
+<link rel="modulepreload" href="__THREE_CDN__/examples/jsm/shaders/GTAOShader.js">
+<link rel="modulepreload" href="__THREE_CDN__/examples/jsm/shaders/PoissonDenoiseShader.js">
+<link rel="modulepreload" href="__THREE_CDN__/examples/jsm/shaders/OutputShader.js">
+<link rel="modulepreload" href="__THREE_CDN__/examples/jsm/math/SimplexNoise.js">
 <script>/*__MODEL_DATA__*/</script>
 <script>/*__WORKER_SRC__*/</script>
 <script type="module">
@@ -296,7 +314,6 @@ import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
 import { RectAreaLightUniformsLib } from 'three/addons/lights/RectAreaLightUniformsLib.js';
-import { toCreasedNormals } from 'three/addons/utils/BufferGeometryUtils.js';
 import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
 import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
 import { GTAOPass } from 'three/addons/postprocessing/GTAOPass.js';
@@ -340,14 +357,59 @@ function save() {
 
 // ---------- decode meshes ----------
 function b64(s, T) { const bin = atob(s); const u8 = new Uint8Array(bin.length); for (let i = 0; i < bin.length; i++) u8[i] = bin.charCodeAt(i); return new T(u8.buffer); }
+// Crease normals: a vertex's normal is the sum of the face normals around its position that lie within
+// `creaseAngle` of the face it belongs to. This is three's toCreasedNormals (same hashing, same arithmetic,
+// identical normals), but on typed arrays and with the output indexed: corners of one vertex that end up with
+// the same normal share a vertex, so a part has about a third of the vertices (and builds in half the time).
+function creasedGeometry(pos, idx, creaseAngle) {
+  const creaseDot = Math.cos(creaseAngle), mul = (1 + 1e-10) * 1e2;
+  const nV = pos.length / 3, nT = idx.length / 3;
+  const group = new Int32Array(nV), ids = new Map();   // vertices at the same rounded position form a group
+  for (let v = 0; v < nV; v++) {
+    const key = `${~~(pos[3 * v] * mul)},${~~(pos[3 * v + 1] * mul)},${~~(pos[3 * v + 2] * mul)}`;
+    let g = ids.get(key); if (g === undefined) { g = ids.size; ids.set(key, g); } group[v] = g;
+  }
+  const fn = new Float64Array(3 * nT);                   // face normals: cross(c - b, a - b), normalised
+  for (let t = 0; t < nT; t++) {
+    const a = 3 * idx[3 * t], b = 3 * idx[3 * t + 1], c = 3 * idx[3 * t + 2];
+    const ux = pos[c] - pos[b], uy = pos[c + 1] - pos[b + 1], uz = pos[c + 2] - pos[b + 2];
+    const vx = pos[a] - pos[b], vy = pos[a + 1] - pos[b + 1], vz = pos[a + 2] - pos[b + 2];
+    const x = uy * vz - uz * vy, y = uz * vx - ux * vz, z = ux * vy - uy * vx, inv = 1 / (Math.sqrt(x * x + y * y + z * z) || 1);
+    fn[3 * t] = x * inv; fn[3 * t + 1] = y * inv; fn[3 * t + 2] = z * inv;
+  }
+  const start = new Int32Array(ids.size + 1);            // per group: the faces touching it, once per corner, in face order
+  for (let i = 0; i < idx.length; i++) start[group[idx[i]] + 1]++;
+  for (let g = 0; g < ids.size; g++) start[g + 1] += start[g];
+  const fill = start.slice(0, ids.size), faces = new Int32Array(idx.length);
+  for (let i = 0; i < idx.length; i++) faces[fill[group[idx[i]]]++] = (i / 3) | 0;
+  const outPos = [], outNrm = [], next = [], head = new Int32Array(nV).fill(-1), outIdx = new Uint32Array(idx.length), n = new Float32Array(3);
+  for (let i = 0; i < idx.length; i++) {
+    const t = (i / 3) | 0, v = idx[i], g = group[v], fx = fn[3 * t], fy = fn[3 * t + 1], fz = fn[3 * t + 2];
+    let x = 0, y = 0, z = 0;
+    for (let k = start[g]; k < start[g + 1]; k++) {
+      const o = 3 * faces[k];
+      if (fx * fn[o] + fy * fn[o + 1] + fz * fn[o + 2] > creaseDot) { x += fn[o]; y += fn[o + 1]; z += fn[o + 2]; }
+    }
+    const inv = 1 / (Math.sqrt(x * x + y * y + z * z) || 1);
+    n[0] = x * inv; n[1] = y * inv; n[2] = z * inv;
+    let o = head[v];
+    while (o >= 0 && !(outNrm[3 * o] === n[0] && outNrm[3 * o + 1] === n[1] && outNrm[3 * o + 2] === n[2])) o = next[o];
+    if (o < 0) {
+      o = next.length; next.push(head[v]); head[v] = o;
+      outPos.push(pos[3 * v], pos[3 * v + 1], pos[3 * v + 2]); outNrm.push(n[0], n[1], n[2]);
+    }
+    outIdx[i] = o;
+  }
+  return { position: new Float32Array(outPos), normal: new Float32Array(outNrm), index: next.length < 65536 ? new Uint16Array(outIdx) : outIdx };
+}
 function makeGeometry(pos, idx) {
+  const { position, normal, index } = creasedGeometry(pos, idx, THREE.MathUtils.degToRad(32));
   const g = new THREE.BufferGeometry();
-  g.setAttribute('position', new THREE.BufferAttribute(pos, 3));
-  g.setIndex(new THREE.BufferAttribute(idx, 1));
-  const out = toCreasedNormals(g, THREE.MathUtils.degToRad(32));
-  g.dispose();
-  out.computeBoundingSphere(); out.computeBoundingBox();
-  return out;
+  g.setAttribute('position', new THREE.BufferAttribute(position, 3));
+  g.setAttribute('normal', new THREE.BufferAttribute(normal, 3));
+  g.setIndex(new THREE.BufferAttribute(index, 1));
+  g.computeBoundingSphere(); g.computeBoundingBox();
+  return g;
 }
 const DEFAULT_GEO = {};
 for (const [k, d] of Object.entries(D.parts)) DEFAULT_GEO[k] = makeGeometry(b64(d.p, Float32Array), b64(d.i, d.i32 ? Uint32Array : Uint16Array));
@@ -443,11 +505,27 @@ const SHADOW_MAP = coarse ? 1024 : 2048;
     float l = length( g );
     return l > PCSS_SLOPE ? g * ( PCSS_SLOPE / l ) : g;
   }
+  bool pcssSkip = false; // set by lights_fragment_begin: the surface faces away from the key light
   float getShadow(`),
     'bool frustumTest = inFrustum && shadowCoord.z <= 1.0;',
     'bool frustumTest = inFrustum && shadowCoord.z <= 1.0;\n\t\tvec2 pcssG = pcssSlope( dFdx( shadowCoord.xyz ), dFdy( shadowCoord.xyz ) );'),
     'if ( frustumTest ) {',
-    'if ( frustumTest ) {\n\t\t\treturn pcss( shadowMap, shadowCoord.xy, shadowCoord.z, pcssG );');
+    'if ( frustumTest ) {\n\t\t\tif ( pcssSkip ) return 1.0; // N.L <= 0: no direct light to shadow\n\t\t\treturn pcss( shadowMap, shadowCoord.xy, shadowCoord.z, pcssG );');
+
+  // Exact shader shortcuts (same output, less work): the point lights only act within their range, the key
+  // light's shadow is skipped where the surface faces away from it, and a rect light does nothing for
+  // fragments behind its plane or while it is off.
+  const RE_DIRECT = 'RE_Direct( directLight, geometryPosition, geometryNormal, geometryViewDir, geometryClearcoatNormal, material, reflectedLight );';
+  let lights = THREE.ShaderChunk.lights_fragment_begin;
+  const p0 = lights.indexOf('#if ( NUM_POINT_LIGHTS > 0 ) && defined( RE_Direct )'), p1 = lights.indexOf('#if ( NUM_SPOT_LIGHTS > 0 )');
+  if (p0 < 0 || p1 < p0) { const msg = 'Shader patch did not match: point light block in lights_fragment_begin'; console.error(msg); throw new Error(msg); }
+  lights = lights.slice(0, p0) + patch(lights.slice(p0, p1), RE_DIRECT, 'if ( directLight.visible ) ' + RE_DIRECT, 'point light RE_Direct') + lights.slice(p1);
+  const KEY_SHADOW = 'directLight.color *= ( directLight.visible && receiveShadow ) ? getShadow( directionalShadowMap[ i ]';
+  THREE.ShaderChunk.lights_fragment_begin = patch(lights, KEY_SHADOW, 'pcssSkip = dot( geometryNormal, directLight.direction ) <= 0.0;\n\t\t' + KEY_SHADOW, 'directional shadow lookup');
+  THREE.ShaderChunk.lights_physical_pars_fragment = patch(THREE.ShaderChunk.lights_physical_pars_fragment,
+    'vec2 uv = LTC_Uv( normal, viewDir, roughness );',
+    `if ( lightColor == vec3( 0.0 ) || dot( cross( rectCoords[ 1 ] - rectCoords[ 0 ], rectCoords[ 3 ] - rectCoords[ 0 ] ), position - rectCoords[ 0 ] ) < 0.0 ) return; // off, or behind the light (what LTC_Evaluate would return 0 for)
+		vec2 uv = LTC_Uv( normal, viewDir, roughness );`, 'rect light guard');
 }
 // The wall area lights face outward from the diffuser and everything of the model sits behind their planes
 // (LTC_Evaluate returns 0 there), so the model's materials get a lighting chunk without the rect-light loop.
@@ -460,8 +538,9 @@ const LIGHTS_NO_RECT = (() => {
 })();
 const scene = new THREE.Scene();
 const pmrem = new THREE.PMREMGenerator(renderer);
-scene.environment = pmrem.fromScene(new RoomEnvironment(renderer), 0.04).texture;
-pmrem.dispose();
+const room = new RoomEnvironment(renderer);
+scene.environment = pmrem.fromScene(room, 0.04).texture;
+room.dispose(); pmrem.dispose();
 // three r160 has no scene.environmentIntensity, so the room light is scaled on each material instead
 // (see mat() and applyFloor()). At full strength it lights every surface evenly, inside the housing too.
 const ENV = 0.45;
@@ -485,7 +564,7 @@ scene.add(new THREE.HemisphereLight(0xffffff, 0x303036, 0.25));
 const modelBox = new THREE.Box3(), partBox = new THREE.Box3(), modelCenter = new THREE.Vector3();
 function fitShadow() {
   modelBox.makeEmpty();
-  for (const m of Object.values(meshes)) if (m.visible) modelBox.union(partBox.copy(m.geometry.boundingBox).translate(m.position));
+  for (const m of MESH_LIST) if (m.visible) modelBox.union(partBox.copy(m.geometry.boundingBox).translate(m.position));
   if (modelBox.isEmpty()) return;
   modelBox.getCenter(modelCenter);
   // The box is fixed in size (see SHADOW_R) and follows the model's centre; its depth reaches the floor.
@@ -592,7 +671,6 @@ const M = {
   keycap: mat({ color: look.cap, roughness: 0.78 }, true),
   socket: mat({ color: 0x24262a, roughness: 0.6 }),
   pcb: mat({ color: 0x1d3f73, roughness: 0.5 }),
-  metal: mat({ color: 0xb9bdc4, roughness: 0.28, metalness: 0.9 }),
   cell: mat({ color: 0xcfd3d8, roughness: 0.25, metalness: 0.95 }),
   brass: mat({ color: 0xc9a14a, roughness: 0.3, metalness: 0.9 }),
   // Nickel-plated USB shell, tinned leads and contacts, white LED packages with a glowing lens.
@@ -710,6 +788,7 @@ for (const [k, p] of PART_LIST) {
   m.matrixAutoUpdate = false;
   meshes[k] = m; scene.add(m);
 }
+const MESH_LIST = Object.values(meshes);
 const GROUPS = [
   { label: 'Upper housing', keys: ['upper'], color: () => M.top.color, tag: 'print · opaque' },
   { label: 'Diffuser', keys: ['diffuser'], color: () => new THREE.Color(look.dif).lerp(new THREE.Color(0xffffff), 0.5), tag: 'print · frosted' },
@@ -754,10 +833,14 @@ const CAP_FINISHES = [
   ['pbt', 'PBT', { roughness: 0.8, clearcoat: 0, sheen: 0.25, sheenRoughness: 0.9 }],
   ['abs', 'ABS', { roughness: 0.32, clearcoat: 0.35, clearcoatRoughness: 0.15, sheen: 0 }],
 ];
+// A material's program only changes when clearcoat, sheen or a map switch on or off; everything else is a
+// uniform. Flagging needsUpdate on every colour-picker event made three look the program up again each time.
+const variant = (m) => `${m.clearcoat > 0}|${m.sheen > 0}|${!!m.map}`;
+function setValues(m, values) { const before = variant(m); m.setValues(values); if (variant(m) !== before) m.needsUpdate = true; }
 function applyFinish(m, list, id) {
   const f = (list.find(x => x[0] === id) || list[0])[2];
   // A white sheen on a dark part reads as grey haze, so the sheen takes the part's own colour.
-  m.setValues(f); m.sheenColor?.copy(m.color).lerp(new THREE.Color(0xffffff), 0.25); m.needsUpdate = true;
+  setValues(m, f); m.sheenColor?.copy(m.color).lerp(new THREE.Color(0xffffff), 0.25);
 }
 
 // ---------- floor ----------
@@ -772,30 +855,35 @@ const floorFade = canvasTex(256, 256, (g, w) => {
   r.addColorStop(0, '#fff'); r.addColorStop(0.3, '#fff'); r.addColorStop(1, '#000');
   g.fillStyle = r; g.fillRect(0, 0, w, w);
 });
-// Procedural walnut: long, gently curving grain with fine pores and a plank seam.
-const walnutTex = canvasTex(512, 512, (g, w, h) => {
-  const img = g.createImageData(w, h), d = img.data;
-  const hash = (n) => { const x = Math.sin(n * 127.1) * 43758.5453; return x - Math.floor(x); };
-  const colNoise = Array.from({ length: w }, (_, x) => hash(x + 0.5));
-  for (let y = 0; y < h; y++) {
-    for (let x = 0; x < w; x++) {
-      const bend = 7 * Math.sin(y * 2 * Math.PI / h + x * 0.004) + 2.5 * Math.sin(y * 6 * Math.PI / h + 1.7);
-      const ring = 0.5 + 0.5 * Math.sin((x + bend) * 0.11 + 2.2 * Math.sin(x * 0.013));
-      const pore = colNoise[x] > 0.86 && hash(Math.floor(y / 6) * 31.7 + x) > 0.3 ? 0.18 : 0;
-      const t = Math.pow(ring, 4) * 0.5 + colNoise[(x * 7) % w] * 0.1 + pore + (x % 256 < 2 ? 0.45 : 0);
-      const i = (y * w + x) * 4;
-      d[i] = 60 - 34 * t; d[i + 1] = 39 - 23 * t; d[i + 2] = 27 - 16 * t; d[i + 3] = 255;
+// Procedural walnut: long, gently curving grain with fine pores and a plank seam. Built the first time it is needed.
+let walnutTex = null;
+function walnutTexture() {
+  if (walnutTex) return walnutTex;
+  walnutTex = canvasTex(512, 512, (g, w, h) => {
+    const img = g.createImageData(w, h), d = img.data;
+    const hash = (n) => { const x = Math.sin(n * 127.1) * 43758.5453; return x - Math.floor(x); };
+    const colNoise = Array.from({ length: w }, (_, x) => hash(x + 0.5));
+    for (let y = 0; y < h; y++) {
+      for (let x = 0; x < w; x++) {
+        const bend = 7 * Math.sin(y * 2 * Math.PI / h + x * 0.004) + 2.5 * Math.sin(y * 6 * Math.PI / h + 1.7);
+        const ring = 0.5 + 0.5 * Math.sin((x + bend) * 0.11 + 2.2 * Math.sin(x * 0.013));
+        const pore = colNoise[x] > 0.86 && hash(Math.floor(y / 6) * 31.7 + x) > 0.3 ? 0.18 : 0;
+        const t = Math.pow(ring, 4) * 0.5 + colNoise[(x * 7) % w] * 0.1 + pore + (x % 256 < 2 ? 0.45 : 0);
+        const i = (y * w + x) * 4;
+        d[i] = 60 - 34 * t; d[i + 1] = 39 - 23 * t; d[i + 2] = 27 - 16 * t; d[i + 3] = 255;
+      }
     }
-  }
-  g.putImageData(img, 0, 0);
-});
-walnutTex.colorSpace = THREE.SRGBColorSpace;
-walnutTex.wrapS = walnutTex.wrapT = THREE.RepeatWrapping; walnutTex.repeat.set(4, 4); walnutTex.rotation = 0.35;
-walnutTex.anisotropy = renderer.capabilities.getMaxAnisotropy();
+    g.putImageData(img, 0, 0);
+  });
+  walnutTex.colorSpace = THREE.SRGBColorSpace;
+  walnutTex.wrapS = walnutTex.wrapT = THREE.RepeatWrapping; walnutTex.repeat.set(4, 4); walnutTex.rotation = 0.35;
+  walnutTex.anisotropy = renderer.capabilities.getMaxAnisotropy();
+  return walnutTex;
+}
 const FLOORS = [
   // All dark on purpose: a pale floor reflects so much room light that the LED spill disappears.
   ['slate', 'Slate desk', { color: 0x2b2e33, map: null, roughness: 0.7, clearcoat: 0, sheen: 0, envMapIntensity: 0.5, specularIntensity: 0.7 }],
-  ['walnut', 'Walnut', { color: 0xffffff, map: walnutTex, roughness: 0.6, clearcoat: 0.12, clearcoatRoughness: 0.35, sheen: 0, envMapIntensity: 0.3, specularIntensity: 0.45 }],
+  ['walnut', 'Walnut', { color: 0xffffff, map: 'walnut', roughness: 0.6, clearcoat: 0.12, clearcoatRoughness: 0.35, sheen: 0, envMapIntensity: 0.3, specularIntensity: 0.45 }],
   ['felt', 'Felt mat', { color: 0x16171a, map: null, roughness: 1, clearcoat: 0, sheen: 1, sheenRoughness: 0.8, envMapIntensity: 0.6, specularIntensity: 1 }],
   ['gloss', 'Glossy black', { color: 0x0e0f11, map: null, roughness: 0.1, clearcoat: 1, clearcoatRoughness: 0.03, sheen: 0, envMapIntensity: 1, specularIntensity: 1 }],
 ];
@@ -840,9 +928,12 @@ floorMat.onBeforeCompile = (sh) => {
 const floorGroup = new THREE.Group(); floorGroup.add(floor); scene.add(floorGroup);
 // The floor is hidden while the model is exploded (any amount); the setting comes back when it closes.
 const floorShown = () => look.floor && state.explodeTarget <= 0;
+function setFloorMaterial(id) {
+  const f = (FLOORS.find(x => x[0] === id) || FLOORS[0])[2];
+  setValues(floorMat, { ...f, map: f.map === 'walnut' ? walnutTexture() : f.map, envMapIntensity: f.envMapIntensity * ENV });
+}
 function applyFloor() {
-  const f = (FLOORS.find(x => x[0] === look.ground) || FLOORS[0])[2];
-  floorMat.setValues({ ...f, envMapIntensity: f.envMapIntensity * ENV }); floorMat.needsUpdate = true;
+  setFloorMaterial(look.ground);
   const on = floorShown();
   floorGroup.visible = on;
   stage.classList.toggle('floor-on', on); applyStageColor();
@@ -888,10 +979,10 @@ const VIEWS = [['iso', 'Iso', [-58, -92, 60]], ['top', 'Top', [0, -0.01, 125]], 
 // ---------- render on demand ----------
 // The loop only runs while something moves (orbit damping, auto-rotate, tweens, animated light);
 // otherwise the page renders nothing and costs no GPU time.
-let running = false, needsRender = true, onScreen = true, last = performance.now();
+let running = false, needsRender = true, onScreen = true, started = false, last = performance.now();
 function invalidate() {
   needsRender = true;
-  if (!running && onScreen && !document.hidden) { running = true; last = performance.now(); requestAnimationFrame(frame); }
+  if (started && !running && onScreen && !document.hidden) { running = true; last = performance.now(); requestAnimationFrame(frame); }
 }
 new IntersectionObserver(([e]) => { onScreen = e.isIntersecting; if (onScreen) invalidate(); }).observe(stage);
 document.addEventListener('visibilitychange', () => { if (!document.hidden) invalidate(); });
@@ -1374,6 +1465,9 @@ function resize() {
 new ResizeObserver(resize).observe(stage);
 
 const base = new THREE.Color(), ledDir = new THREE.Vector3();
+// Parsing a hex string every frame is wasteful: parse again only when the setting changes.
+const hexCache = () => { const c = new THREE.Color(); let seen = null; return (hex) => { if (seen !== hex) { seen = hex; c.set(hex); } return c; }; };
+const lookColor = hexCache(), lookDif = hexCache();
 // Ambient animation (auto-rotate, the animated light) is slow enough to look the same at 30 fps, so it renders at
 // half rate; anything the viewer drives (orbit, tweens, presses, controls) renders at the display rate.
 let ambientMs = 1000 / 30 - 2;                 // minimum gap between renders while only ambient motion runs
@@ -1429,7 +1523,7 @@ function frame(now) {
 
   // light
   let level = 0;
-  base.set(look.color);
+  base.copy(lookColor(look.color));
   switch (look.mode) {
     case 'static': case 'spin': level = 1; break;
     case 'breathe': level = 0.12 + 0.88 * (0.5 - 0.5 * Math.cos(t * 2 * Math.PI / 3.4)); break;
@@ -1446,7 +1540,7 @@ function frame(now) {
   const fade = 1 - 0.6 * state.explode;
   // A lit diffuser outshines the room light it reflects, so let the plastic's own white recede as the
   // light rises; otherwise the glow washes out to pastel.
-  M.diffuser.color.set(look.dif).multiplyScalar(1 - 0.6 * Math.min(1, level * fade * 1.3));
+  M.diffuser.color.copy(lookDif(look.dif)).multiplyScalar(1 - 0.6 * Math.min(1, level * fade * 1.3));
   for (let i = 0; i < 4; i++) {
     const [x, y] = PR.ledsBottom[i] || [0, 0];
     difGlow.uLedPos.value[i].set(x, y, L.Zb);
@@ -1468,7 +1562,7 @@ function frame(now) {
     placeWallLights(meshes.diffuser.position.z);
     // The floor sits under the lowest part, also when exploded.
     let minZ = Infinity;
-    for (const m of Object.values(meshes)) if (m.visible) minZ = Math.min(minZ, m.geometry.boundingBox.min.z + m.position.z);
+    for (const m of MESH_LIST) if (m.visible) minZ = Math.min(minZ, m.geometry.boundingBox.min.z + m.position.z);
     floorGroup.position.z = (Number.isFinite(minZ) ? minZ : 0) - 0.02;
     const bb = meshes.diffuser.geometry.boundingBox, on = meshes.diffuser.visible ? 1 : 0;
     floorGlow.uBase.value.set(bb.max.x, PR.baseR, 0.6 * on * Math.max(0, 1 - 1.6 * state.explode));
@@ -1525,9 +1619,54 @@ renderInfo();
 setStlLinks(null);
 if (isDefault()) setStatus(checksHtml(D.checks) + '<span class="note">Default build: the STLs below are the published ones.</span>');
 else scheduleRebuild(0);
-$('overlay').hidden = true;
-invalidate();
+// Compile the first frame's shaders up front (in parallel where the browser can) and keep the loading overlay
+// until that frame is drawn. A program depends on the target it draws to (colour space, tone mapping), so
+// compile against the composer's target, not the screen.
+function compileFor(object, target = scene) {
+  const prev = renderer.getRenderTarget();
+  renderer.setRenderTarget(composer ? composer.readBuffer : null);
+  try { return renderer.compileAsync(object, camera, target === object ? null : target); }
+  finally { renderer.setRenderTarget(prev); }
+}
 window.__ready = true;
+try { await compileFor(scene); } catch (e) { console.warn('Shader precompile failed:', e); }
+started = true; // no frame before this: the loop only starts once the programs exist
+invalidate();
+requestAnimationFrame(() => { $('overlay').hidden = true; }); // runs right after the first frame
+
+// When the page is idle, build the shader variants a click would otherwise compile in the middle of a frame:
+// the other floors and the clearcoat finishes. (Not the cut-away: its programs depend on the clipping state three
+// only sets while rendering, so compile() cannot build them.) Each step switches the setting, starts the
+// compile (programs are created synchronously; only the wait is async), and switches it straight back, so
+// no frame ever draws the temporary state. three keeps programs per material key, so a later switch is free.
+{
+  const idle = () => new Promise((r) => ('requestIdleCallback' in window ? requestIdleCallback(r, { timeout: 4000 }) : setTimeout(r, 1000)));
+  const steps = [
+    () => { // the other floors
+      const p = FLOORS.filter(([id]) => id !== look.ground).map(([id]) => { setFloorMaterial(id); return compileFor(floorGroup); });
+      setFloorMaterial(look.ground);
+      return Promise.all(p);
+    },
+    () => { // clearcoat finishes
+      const p = [];
+      for (const [m, list, mesh, cur] of [[M.top, TOP_FINISHES, meshes.upper, look.topFin], [M.keycap, CAP_FINISHES, meshes.keycap, look.capFin]]) {
+        for (const [id] of list) {
+          if (id === cur) continue;
+          applyFinish(m, list, id); m.needsUpdate = true; p.push(compileFor(mesh));
+        }
+        applyFinish(m, list, cur); m.needsUpdate = true;
+      }
+      return Promise.all(p);
+    },
+  ];
+  (async () => {
+    for (const step of steps) {
+      await idle();
+      while (renderer.info.render.frame < 1) await idle();
+      try { await step(); } catch (e) { console.warn('Shader warm-up failed:', e); }
+    }
+  })();
+}
 window.__fidget = { state, look, cfg, meshes, renderer, camera, controls, invalidate, scene, gtao, composer, setAO, setAmbientCap(ms) { ambientMs = ms; }, get running() { return running; } };
 </script>
 </body>
