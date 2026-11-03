@@ -42,6 +42,9 @@
   body { background: var(--bg); color: var(--fg); font-family: var(--font-body); font-size: 14px; line-height: 1.45; }
   .app { display: grid; grid-template-columns: minmax(0, 1fr) 380px; height: 100%; }
   .stage { position: relative; background: var(--stage); min-height: 0; overflow: hidden; }
+  /* With the floor on, the stage goes dark in either theme so the LED light reads; the overlay text and buttons follow. */
+  .stage.floor-on { --stage: #101215; --panel: #15181c; --fg: #e8eaee; --muted: #8f97a4; --line: #2c3139; --chip: #1e2228;
+                    --accent: #f0b43c; --accent-ink: #1a1305; color-scheme: dark; color: var(--fg); }
   #c { display: block; width: 100%; height: 100%; touch-action: none; cursor: grab; outline: none; }
   #c.pressable { cursor: pointer; }
   .hud { position: absolute; left: max(16px, env(safe-area-inset-left, 0px)); top: 16px; pointer-events: none; display: grid; gap: 2px; }
@@ -383,8 +386,7 @@ keyLight.shadow.radius = 4; keyLight.shadow.bias = -0.0004;
 const rimLight = new THREE.DirectionalLight(0xffffff, 0.5); rimLight.position.set(90, 70, 40); scene.add(rimLight);
 scene.add(new THREE.HemisphereLight(0xffffff, 0x404048, 0.35));
 
-function cssVar(n) { return getComputedStyle(document.documentElement).getPropertyValue(n).trim(); }
-function applyStageColor() { scene.background = new THREE.Color(cssVar('--stage')); invalidate(); }
+function applyStageColor() { scene.background = new THREE.Color(getComputedStyle(stage).getPropertyValue('--stage').trim()); invalidate(); }
 matchMedia('(prefers-color-scheme: dark)').addEventListener('change', applyStageColor);
 new MutationObserver(applyStageColor).observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] });
 
@@ -536,7 +538,7 @@ const walnutTex = canvasTex(512, 512, (g, w, h) => {
       const pore = colNoise[x] > 0.86 && hash(Math.floor(y / 6) * 31.7 + x) > 0.3 ? 0.18 : 0;
       const t = Math.pow(ring, 4) * 0.5 + colNoise[(x * 7) % w] * 0.1 + pore + (x % 256 < 2 ? 0.45 : 0);
       const i = (y * w + x) * 4;
-      d[i] = 92 - 50 * t; d[i + 1] = 62 - 36 * t; d[i + 2] = 44 - 27 * t; d[i + 3] = 255;
+      d[i] = 60 - 34 * t; d[i + 1] = 39 - 23 * t; d[i + 2] = 27 - 16 * t; d[i + 3] = 255;
     }
   }
   g.putImageData(img, 0, 0);
@@ -546,10 +548,10 @@ walnutTex.wrapS = walnutTex.wrapT = THREE.RepeatWrapping; walnutTex.repeat.set(4
 walnutTex.anisotropy = renderer.capabilities.getMaxAnisotropy();
 const FLOORS = [
   // All dark on purpose: a pale floor reflects so much room light that the LED spill disappears.
-  ['slate', 'Slate desk', { color: 0x2b2e33, map: null, roughness: 0.7, clearcoat: 0, sheen: 0 }],
-  ['walnut', 'Walnut', { color: 0xffffff, map: walnutTex, roughness: 0.45, clearcoat: 0.4, clearcoatRoughness: 0.22, sheen: 0 }],
-  ['felt', 'Felt mat', { color: 0x16171a, map: null, roughness: 1, clearcoat: 0, sheen: 1, sheenRoughness: 0.8 }],
-  ['gloss', 'Glossy black', { color: 0x0e0f11, map: null, roughness: 0.1, clearcoat: 1, clearcoatRoughness: 0.03, sheen: 0 }],
+  ['slate', 'Slate desk', { color: 0x2b2e33, map: null, roughness: 0.7, clearcoat: 0, sheen: 0, envMapIntensity: 0.5, specularIntensity: 0.7 }],
+  ['walnut', 'Walnut', { color: 0xffffff, map: walnutTex, roughness: 0.6, clearcoat: 0.12, clearcoatRoughness: 0.35, sheen: 0, envMapIntensity: 0.3, specularIntensity: 0.45 }],
+  ['felt', 'Felt mat', { color: 0x16171a, map: null, roughness: 1, clearcoat: 0, sheen: 1, sheenRoughness: 0.8, envMapIntensity: 0.6, specularIntensity: 1 }],
+  ['gloss', 'Glossy black', { color: 0x0e0f11, map: null, roughness: 0.1, clearcoat: 1, clearcoatRoughness: 0.03, sheen: 0, envMapIntensity: 1, specularIntensity: 1 }],
 ];
 const floorMat = new THREE.MeshPhysicalMaterial({ alphaMap: floorFade, transparent: true, depthWrite: true, sheenColor: 0x4a4e56 });
 const floor = new THREE.Mesh(new THREE.CircleGeometry(260, 96), floorMat);
@@ -570,6 +572,7 @@ function applyFloor() {
   floorMat.setValues(f); floorMat.needsUpdate = true;
   const on = floorShown();
   floorGroup.visible = on; keyLight.castShadow = on;
+  stage.classList.toggle('floor-on', on); applyStageColor();
   // Keep the camera above the floor while it is shown.
   controls.maxPolarAngle = on ? Math.PI / 2 - 0.02 : Math.PI;
   for (const id of ['floor', 'qFloor']) {

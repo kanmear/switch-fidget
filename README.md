@@ -36,7 +36,7 @@ npm run check     # fit checks for every battery preset
 - **Play:** click and hold the keycap, hold <kbd>Space</kbd>, or use **Press key**. Choose a linear, tactile, clicky or silent switch: it changes the stem colour and a synthesised switch sound (no audio files). Phones also vibrate. A press counter keeps count.
 - **Light:** Off, Static, Breathe, Rainbow, Spin (a chase around the halo) and Reactive, with any colour, brightness and speed.
 - **Finish:** preset or custom colours for the shell, keycap and diffuser tint, a matte, satin, gloss or silk shell, and a PBT or ABS keycap.
-- **Floor:** toggle a floor (Slate desk, Walnut, Felt mat or Glossy black, all dark so the light shows) with a soft shadow. It is hidden while the model is exploded. The diffuser's glow spills onto it, glossy floors reflect it, and shiny finishes pick up the coloured light.
+- **Floor:** toggle a floor (Slate desk, Walnut, Felt mat or Glossy black, all dark so the light shows) with a soft shadow. The stage goes dark while the floor is on. It is hidden while the model is exploded. The diffuser's glow spills onto it, glossy floors reflect it, and shiny finishes pick up the coloured light.
 - **Configure & export:** change the battery, keycap skirt height, collar height and opening, plate cutout, footprint and curve quality. The model rebuilds in a Web Worker in about half a second, runs the same fit checks as CI, and offers the resulting STLs for download. **Copy share link** encodes the build and look in the URL. **Copy params** gives the lines to paste into `src/params.mjs`.
 - **Shortcuts:** <kbd>E</kbd> explode, <kbd>C</kbd> cut away, <kbd>F</kbd> floor, <kbd>R</kbd> auto-rotate, <kbd>1</kbd>–<kbd>4</kbd> camera views, <kbd>0</kbd> reset.
 
