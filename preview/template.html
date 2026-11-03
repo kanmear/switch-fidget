@@ -297,6 +297,10 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
 import { RectAreaLightUniformsLib } from 'three/addons/lights/RectAreaLightUniformsLib.js';
 import { toCreasedNormals } from 'three/addons/utils/BufferGeometryUtils.js';
+import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
+import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
+import { GTAOPass } from 'three/addons/postprocessing/GTAOPass.js';
+import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
 
 const D = window.MODEL;
 const DEFAULT_P = D.params;
@@ -371,20 +375,52 @@ const scene = new THREE.Scene();
 const pmrem = new THREE.PMREMGenerator(renderer);
 scene.environment = pmrem.fromScene(new RoomEnvironment(renderer), 0.04).texture;
 pmrem.dispose();
-scene.environmentIntensity = 0.55;
-const camera = new THREE.PerspectiveCamera(30, 1, 1, 2000);
+// three r160 has no scene.environmentIntensity, so the room light is scaled on each material instead
+// (see mat() and applyFloor()). At full strength it lights every surface evenly, inside the housing too.
+const ENV = 0.45;
+const camera = new THREE.PerspectiveCamera(30, 1, 4, 1200);
 camera.up.set(0, 0, 1);
 const controls = new OrbitControls(camera, canvas);
 controls.enableDamping = true;
 controls.minDistance = 30; controls.maxDistance = 300;
 controls.autoRotate = look.spin; controls.autoRotateSpeed = 0.8;
-const keyLight = new THREE.DirectionalLight(0xffffff, 1.4); keyLight.position.set(-60, -80, 140); scene.add(keyLight);
-// The key light casts the fidget's shadow onto the floor (only the floor receives shadows).
+// The key light casts shadows on every part and on the floor: the collar shades the keycap, the keycap
+// and switch shade the well, and the USB shell shades its own mouth. Its shadow box follows the model.
+const KEY_DIR = new THREE.Vector3(-60, -80, 140).normalize(), KEY_DIST = 160;
+const keyLight = new THREE.DirectionalLight(0xfff6ec, 2.6); scene.add(keyLight, keyLight.target);
+keyLight.castShadow = true;
 keyLight.shadow.mapSize.set(coarse ? 1024 : 2048, coarse ? 1024 : 2048);
-Object.assign(keyLight.shadow.camera, { left: -45, right: 45, top: 45, bottom: -45, near: 60, far: 320 });
-keyLight.shadow.radius = 4; keyLight.shadow.bias = -0.0004;
-const rimLight = new THREE.DirectionalLight(0xffffff, 0.5); rimLight.position.set(90, 70, 40); scene.add(rimLight);
-scene.add(new THREE.HemisphereLight(0xffffff, 0x404048, 0.35));
+keyLight.shadow.bias = -0.00015; keyLight.shadow.normalBias = 0.035;
+const rimLight = new THREE.DirectionalLight(0xe8f0ff, 0.9); rimLight.position.set(90, 70, 40); scene.add(rimLight);
+scene.add(new THREE.HemisphereLight(0xffffff, 0x303036, 0.25));
+const modelBox = new THREE.Box3(), partBox = new THREE.Box3(), modelCenter = new THREE.Vector3();
+function fitShadow() {
+  modelBox.makeEmpty();
+  for (const m of Object.values(meshes)) if (m.visible) modelBox.union(partBox.copy(m.geometry.boundingBox).translate(m.position));
+  if (modelBox.isEmpty()) return;
+  modelBox.getCenter(modelCenter);
+  const r = modelBox.getSize(partBox.min).length() / 2 + 1;
+  keyLight.target.position.copy(modelCenter); keyLight.target.updateMatrixWorld();
+  keyLight.position.copy(modelCenter).addScaledVector(KEY_DIR, KEY_DIST);
+  // Depth also reaches the floor beyond the model, where its shadow lands.
+  const sc = keyLight.shadow.camera;
+  if (sc.right !== r) { Object.assign(sc, { left: -r, right: r, top: r, bottom: -r, near: KEY_DIST - r - 2, far: KEY_DIST + 2 * r + 30 }); sc.updateProjectionMatrix(); }
+}
+
+// Ambient occlusion (screen-space GTAO): darkens creases, the well, the USB mouth and the contact with
+// the floor, which the room light alone can't. Dropped first if the GPU can't keep up.
+let composer = null, gtao = null, aoOn = true;
+try {
+  composer = new EffectComposer(renderer, new THREE.WebGLRenderTarget(1, 1, { type: THREE.HalfFloatType, samples: 4 }));
+  composer.addPass(new RenderPass(scene, camera));
+  gtao = new GTAOPass(scene, camera, 1, 1);
+  gtao.updateGtaoMaterial({ radius: 4, distanceExponent: 1.2, thickness: 3, distanceFallOff: 1, scale: 1.4, samples: 16 });
+  gtao.updatePdMaterial({ lumaPhi: 10, depthPhi: 2, normalPhi: 3, radius: 5, rings: 2, samples: 16 });
+  gtao.blendIntensity = 1;
+  gtao.normalMaterial.side = THREE.DoubleSide;
+  composer.addPass(gtao);
+  composer.addPass(new OutputPass());
+} catch (e) { console.warn('Ambient occlusion is unavailable:', e); composer = null; aoOn = false; }
 
 function applyStageColor() { scene.background = new THREE.Color(getComputedStyle(stage).getPropertyValue('--stage').trim()); invalidate(); }
 matchMedia('(prefers-color-scheme: dark)').addEventListener('change', applyStageColor);
@@ -396,6 +432,7 @@ let sectionOn = false;
 const mats = [];
 function mat(opts, physical = false) {
   const m = new (physical ? THREE.MeshPhysicalMaterial : THREE.MeshStandardMaterial)({ side: THREE.DoubleSide, ...opts });
+  m.envMapIntensity *= ENV;
   mats.push(m); return m;
 }
 const M = {
@@ -412,7 +449,11 @@ const M = {
   metal: mat({ color: 0xb9bdc4, roughness: 0.28, metalness: 0.9 }),
   cell: mat({ color: 0xcfd3d8, roughness: 0.25, metalness: 0.95 }),
   brass: mat({ color: 0xc9a14a, roughness: 0.3, metalness: 0.9 }),
-  led: mat({ color: 0xffffff, roughness: 0.3, emissive: 0xffffff, emissiveIntensity: 1 }),
+  // Nickel-plated USB shell, tinned leads and contacts, white LED packages with a glowing lens.
+  shell: mat({ color: 0xd4d7dc, roughness: 0.22, metalness: 1, envMapIntensity: 1.6 }),
+  tin: mat({ color: 0xc3c7cc, roughness: 0.35, metalness: 0.9, envMapIntensity: 1.4 }),
+  ledBody: mat({ color: 0xeeece6, roughness: 0.55 }),
+  led: mat({ color: 0xfaf6e8, roughness: 0.15, emissive: 0xffffff, emissiveIntensity: 1 }),
   screw: mat({ color: 0x4a4d55, roughness: 0.35, metalness: 0.85 }),
 };
 
@@ -442,6 +483,46 @@ M.diffuser.onBeforeCompile = (sh) => {
       }`);
 };
 
+// Inside the USB-C shell the metal mostly reflects its own walls, not the room: darken it with depth
+// from the mouth so the port reads as an opening instead of a mirror. Applies to the shell and the contacts.
+const usbCavity = { uUsb: { value: new THREE.Vector4() }, uUsbY: { value: new THREE.Vector2() } };
+function placeUsbCavity() {
+  usbCavity.uUsb.value.set(PR.usbW / 2 - 0.22, PR.usbH / 2 - 0.22, 1.23, L.usbZ0 + PR.usbH / 2);
+  usbCavity.uUsbY.value.set(L.usbY0, L.usbY0 + PR.usbL);
+}
+for (const m of [M.shell, M.tin]) m.onBeforeCompile = (sh) => {
+  Object.assign(sh.uniforms, usbCavity);
+  sh.vertexShader = sh.vertexShader
+    .replace('#include <common>', '#include <common>\nvarying vec3 vObjPos;')
+    .replace('#include <begin_vertex>', '#include <begin_vertex>\nvObjPos = position;');
+  sh.fragmentShader = sh.fragmentShader
+    .replace('#include <common>', '#include <common>\nvarying vec3 vObjPos;\nuniform vec4 uUsb;\nuniform vec2 uUsbY;')
+    .replace('#include <opaque_fragment>', `{
+        // rounded-rectangle distance to the shell's inner wall (negative inside the opening)
+        vec2 q = abs(vec2(vObjPos.x, vObjPos.z - uUsb.w)) - uUsb.xy + uUsb.z;
+        float sd = length(max(q, 0.0)) + min(max(q.x, q.y), 0.0) - uUsb.z;
+        float depth = vObjPos.y - uUsbY.x;
+        float inside = step(sd, 0.03) * step(depth, uUsbY.y - uUsbY.x + 0.01);
+        outgoingLight *= mix(1.0, 0.12, inside * smoothstep(0.15, 2.8, depth));
+      }
+      #include <opaque_fragment>`);
+};
+
+// Cut-away: every part is a closed shell, so the cut shows its back faces, lit as if from inside, and
+// the parts look hollow. Paint back faces a flat, darker version of the part colour while the section
+// is on, so each cut reads as solid material.
+for (const m of mats) {
+  const prev = m.onBeforeCompile, key = prev.toString() + '|cap';
+  m.customProgramCacheKey = () => key; // keep each material's own shader hooks apart in the program cache
+  m.onBeforeCompile = (sh, r) => {
+    prev.call(m, sh, r);
+    sh.fragmentShader = sh.fragmentShader.replace('#include <opaque_fragment>', `#ifdef SECTION_CAP
+        if (!gl_FrontFacing) outgoingLight = diffuseColor.rgb * 0.42 + totalEmissiveRadiance * 0.4;
+      #endif
+      #include <opaque_fragment>`);
+  };
+}
+
 // ---------- parts ----------
 // e = explode direction (multiplied by the explode distance)
 const PARTS = {
@@ -452,10 +533,13 @@ const PARTS = {
   keycap:     { mat: 'keycap',   e: [0, 0, 3.5], press: true },
   pcb:        { mat: 'pcb',      e: [0, 0, 0] },
   socket:     { mat: 'socket',   e: [0, 0, 0] },
-  usb:        { mat: 'metal',    e: [0, 0, 0] },
+  usb:        { mat: 'shell',    e: [0, 0, 0] },
+  usbTongue:  { mat: 'socket',   e: [0, 0, 0] },
   chips:      { mat: 'socket',   e: [0, 0, 0] },
+  leads:      { mat: 'tin',      e: [0, 0, 0] },
   ledsBottom: { mat: 'led',      e: [0, 0, 0] },
   ledsHalo:   { mat: 'led',      e: [0, 0, 0] },
+  ledBodies:  { mat: 'ledBody',  e: [0, 0, 0] },
   battery:    { mat: 'cell',     e: [0, 0, -0.75] },
   battTab:    { mat: 'brass',    e: [0, 0, -0.75] },
   screws:     { mat: 'screw',    e: [0, 0, -2.3] },
@@ -464,7 +548,7 @@ const meshes = {};
 for (const [k, p] of Object.entries(PARTS)) {
   const m = new THREE.Mesh(DEFAULT_GEO[k], M[p.mat]);
   if (p.order) m.renderOrder = p.order;
-  m.castShadow = true;
+  m.castShadow = true; m.receiveShadow = true;
   m.matrixAutoUpdate = false;
   meshes[k] = m; scene.add(m);
 }
@@ -472,8 +556,8 @@ const GROUPS = [
   { label: 'Upper housing', keys: ['upper'], color: () => M.top.color, tag: 'print · opaque' },
   { label: 'Diffuser', keys: ['diffuser'], color: () => new THREE.Color(look.dif).lerp(new THREE.Color(0xffffff), 0.5), tag: 'print · frosted' },
   { label: 'Switch & keycap', keys: ['switch', 'stem', 'keycap'], color: () => M.keycap.color, tag: 'ref' },
-  { label: 'PCB & socket', keys: ['pcb', 'socket', 'usb', 'chips'], color: () => M.pcb.color, tag: 'ref' },
-  { label: 'LEDs', keys: ['ledsBottom', 'ledsHalo'], color: () => new THREE.Color(0xffffff), tag: 'ref' },
+  { label: 'PCB & socket', keys: ['pcb', 'socket', 'usb', 'usbTongue', 'chips', 'leads'], color: () => M.pcb.color, tag: 'ref' },
+  { label: 'LEDs', keys: ['ledsBottom', 'ledsHalo', 'ledBodies'], color: () => new THREE.Color(0xffffff), tag: 'ref' },
   { label: 'Battery', keys: ['battery', 'battTab'], color: () => M.cell.color, tag: 'ref' },
   { label: 'M2 screws', keys: ['screws'], color: () => M.screw.color, tag: 'ref' },
 ];
@@ -495,6 +579,7 @@ function placeLights() {
   }
 }
 placeLights();
+placeUsbCavity();
 
 // ---------- surface finishes ----------
 // Every finish is a physically based material, so the LED glow, the halo lights and the diffuser's
@@ -506,12 +591,13 @@ const TOP_FINISHES = [
   ['silk', 'Silk', { roughness: 0.3, metalness: 0.55, clearcoat: 0.4, clearcoatRoughness: 0.2, sheen: 0 }],
 ];
 const CAP_FINISHES = [
-  ['pbt', 'PBT', { roughness: 0.8, clearcoat: 0, sheen: 0.3, sheenRoughness: 0.9 }],
+  ['pbt', 'PBT', { roughness: 0.8, clearcoat: 0, sheen: 0.25, sheenRoughness: 0.9 }],
   ['abs', 'ABS', { roughness: 0.32, clearcoat: 0.35, clearcoatRoughness: 0.15, sheen: 0 }],
 ];
 function applyFinish(m, list, id) {
   const f = (list.find(x => x[0] === id) || list[0])[2];
-  m.setValues(f); m.sheenColor?.set(0xffffff); m.needsUpdate = true;
+  // A white sheen on a dark part reads as grey haze, so the sheen takes the part's own colour.
+  m.setValues(f); m.sheenColor?.copy(m.color).lerp(new THREE.Color(0xffffff), 0.25); m.needsUpdate = true;
 }
 
 // ---------- floor ----------
@@ -569,9 +655,9 @@ const floorGroup = new THREE.Group(); floorGroup.add(floor, contact); scene.add(
 const floorShown = () => look.floor && state.explodeTarget <= 0;
 function applyFloor() {
   const f = (FLOORS.find(x => x[0] === look.ground) || FLOORS[0])[2];
-  floorMat.setValues(f); floorMat.needsUpdate = true;
+  floorMat.setValues({ ...f, envMapIntensity: f.envMapIntensity * ENV }); floorMat.needsUpdate = true;
   const on = floorShown();
-  floorGroup.visible = on; keyLight.castShadow = on;
+  floorGroup.visible = on;
   stage.classList.toggle('floor-on', on); applyStageColor();
   // Keep the camera above the floor while it is shown.
   controls.maxPolarAngle = on ? Math.PI / 2 - 0.02 : Math.PI;
@@ -781,7 +867,8 @@ $('qExplode').addEventListener('click', () => setExplode(state.explodeTarget > 0
 function setSection(on) {
   sectionOn = on;
   const planes = on ? [clipPlane] : [];
-  for (const m of mats) { m.clippingPlanes = planes; m.needsUpdate = true; }
+  for (const m of [...mats, ...(gtao ? [gtao.normalMaterial] : [])]) { m.clippingPlanes = planes; m.needsUpdate = true; }
+  for (const m of mats) if (on) m.defines.SECTION_CAP = ''; else delete m.defines.SECTION_CAP;
   pressedBtn($('section'), on); pressedBtn($('qSection'), on);
   invalidate();
 }
@@ -835,8 +922,8 @@ swatches($('glowSw'), GLOW_COLORS, () => look.color, (h) => {
 }, 'glow');
 slider('bright', 'bright', (v) => `${Math.round(v * 100)}%`);
 slider('speed', 'speed', (v) => `${fmt(v, 2)}×`);
-swatches($('topSw'), TOP_COLORS, () => look.top, (h) => { look.top = h; M.top.color.set(h); refreshDots(); save(); invalidate(); }, 'top');
-swatches($('capSw'), CAP_COLORS, () => look.cap, (h) => { look.cap = h; M.keycap.color.set(h); refreshDots(); save(); invalidate(); }, 'cap');
+swatches($('topSw'), TOP_COLORS, () => look.top, (h) => { look.top = h; M.top.color.set(h); applyFinish(M.top, TOP_FINISHES, look.topFin); refreshDots(); save(); invalidate(); }, 'top');
+swatches($('capSw'), CAP_COLORS, () => look.cap, (h) => { look.cap = h; M.keycap.color.set(h); applyFinish(M.keycap, CAP_FINISHES, look.capFin); refreshDots(); save(); invalidate(); }, 'cap');
 segmented($('topFin'), TOP_FINISHES.map(([id, l]) => [id, l]), () => look.topFin, (id) => { look.topFin = id; applyFinish(M.top, TOP_FINISHES, id); save(); invalidate(); }, 'topfin-');
 segmented($('capFin'), CAP_FINISHES.map(([id, l]) => [id, l]), () => look.capFin, (id) => { look.capFin = id; applyFinish(M.keycap, CAP_FINISHES, id); save(); invalidate(); }, 'capfin-');
 applyFinish(M.top, TOP_FINISHES, look.topFin); applyFinish(M.keycap, CAP_FINISHES, look.capFin);
@@ -1033,7 +1120,7 @@ function swapGeometry(geos) {
 function setModelInfo(params, levels, cell, checks) {
   const oldTop = L.Ztop;
   PR = params; L = levels; CELL = cell; CHECKS = checks;
-  placeLights(); renderInfo();
+  placeLights(); placeUsbCavity(); renderInfo();
   // keep the camera looking at the same part of the model when the height changes
   const dz = (L.Ztop - oldTop) * 0.6;
   controls.target.z += dz; camera.position.z += dz;
@@ -1090,6 +1177,7 @@ function resize() {
   const w = stage.clientWidth, h = stage.clientHeight;
   if (!w || !h) return;
   renderer.setSize(w, h, false); camera.aspect = w / h;
+  if (composer) { composer.setPixelRatio(dpr); composer.setSize(w, h); }
   camera.fov = w / h < 0.8 ? 40 : 30; // phones in portrait: widen so the whole fidget fits
   camera.updateProjectionMatrix(); invalidate();
 }
@@ -1192,13 +1280,21 @@ function frame(now) {
 
   const camChanged = controls.update(dt);
   const animating = moving || camChanged || controls.autoRotate || lightAnimated();
-  if (needsRender || animating) { renderer.render(scene, camera); needsRender = false; }
+  if (needsRender || animating) {
+    fitShadow();
+    if (aoOn) composer.render(dt); else renderer.render(scene, camera);
+    needsRender = false;
+  }
 
-  // Adaptive resolution: if sustained animation runs slow, lower the pixel ratio a step (never below 1).
+  // Adaptive quality: if sustained animation runs slow, drop the ambient occlusion first, then lower the
+  // pixel ratio a step at a time (never below 1).
   if (animating) {
     frames++; slowAcc += dt;
     if (frames === 90) {
-      if (slowAcc / frames > 1 / 34 && dpr > 1) { dpr = Math.max(1, dpr - 0.25); renderer.setPixelRatio(dpr); resize(); }
+      if (slowAcc / frames > 1 / 34) {
+        if (aoOn) aoOn = false;
+        else if (dpr > 1) { dpr = Math.max(1, dpr - 0.25); renderer.setPixelRatio(dpr); resize(); }
+      }
       frames = 0; slowAcc = 0;
     }
   }
@@ -1218,7 +1314,7 @@ else scheduleRebuild(0);
 $('overlay').hidden = true;
 invalidate();
 window.__ready = true;
-window.__fidget = { state, look, cfg, meshes, renderer, camera, controls, invalidate, get running() { return running; } };
+window.__fidget = { state, look, cfg, meshes, renderer, camera, controls, invalidate, scene, gtao, setAO(on) { aoOn = on && !!composer; invalidate(); }, get running() { return running; } };
 </script>
 </body>
 </html>
