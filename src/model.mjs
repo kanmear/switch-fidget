@@ -5,6 +5,14 @@
 
 import { P as DEFAULT_P, levels, cell } from './params.mjs';
 
+const CORNERS = [[1, 1], [1, -1], [-1, 1], [-1, -1]]; // sign pairs for the four corners
+
+/**
+ * Build every part for a parameter set.
+ * @param {object} wasm  initialised manifold-3d module (after `setup()`)
+ * @param {object} [P]   parameter set (defaults to params.mjs `P`)
+ * @returns {{ L: object, cell: object, printed: Record<string, object>, reference: Record<string, object> }}
+ */
 export function buildModel(wasm, P = DEFAULT_P) {
   const { Manifold: M, CrossSection: CS } = wasm;
   const L = levels(P);
@@ -37,7 +45,7 @@ export function buildModel(wasm, P = DEFAULT_P) {
             slab(L.halfAt(Ztop) - tc, L.rAt(Ztop) - tc, Ztop - 0.005)]),
   ]);
   const ci = P.collarInner, wc = P.wellChamfer;
-  const haloXY = [[1, 1], [1, -1], [-1, 1], [-1, -1]].map(([sx, sy]) => [sx * P.haloPos, sy * P.haloPos]);
+  const haloXY = CORNERS.map(([sx, sy]) => [sx * P.haloPos, sy * P.haloPos]);
   upper = upper.subtract(U([
     prism(rrect(ci, ci, P.collarR), Zpt, Ztop + 1),
     M.hull([prism(rrect(ci, ci, P.collarR), Ztop - wc - 0.01, Ztop - wc),
@@ -191,7 +199,7 @@ export function buildModel(wasm, P = DEFAULT_P) {
              lens: up ? win(z1 - 0.3, z1 - 0.06) : win(z0 + 0.06, z0 + 0.3) };
   };
   const bot = P.ledsBottom.map(([x, y]) => ledPkg(x, y, Zb - 0.9, Zb, 2, 2, false));
-  const halo = [[1, 1], [1, -1], [-1, 1], [-1, -1]].map(([sx, sy]) => ledPkg(sx * P.haloPos, sy * P.haloPos, Zpcb, Zpcb + 0.9, 2, 2, true));
+  const halo = CORNERS.map(([sx, sy]) => ledPkg(sx * P.haloPos, sy * P.haloPos, Zpcb, Zpcb + 0.9, 2, 2, true));
   const mini = ledPkg(P.ledPos[0], P.ledPos[1], Zpcb - 0.6, Zpcb + 1.2, 3.2, 2.8, true); // SK6812MINI-E in the switch window
   const ledsBottom = U(bot.map(l => l.lens));
   const ledsHalo = U([...halo.map(l => l.lens), mini.lens]);

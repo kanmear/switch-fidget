@@ -4,7 +4,7 @@
 import Module from 'manifold-3d/manifold.js';
 import { garbageCollectManifold, cleanup } from 'manifold-3d/lib/garbage-collector.js';
 import { P } from '../src/params.mjs';
-import { runChecks } from '../src/checks.mjs';
+import { runChecks, summarizeChecks } from '../src/checks.mjs';
 import { PRINTS, printOriented, toStl, meshArrays, numericLevels } from '../src/export.mjs';
 
 let wasmReady;
@@ -29,14 +29,14 @@ self.onmessage = async ({ data: { id, params, stl } }) => {
     }
     const out = {
       id, parts, stls, levels: numericLevels(r.L), cell: r.model.cell,
-      checks: { clean: r.ok, problems: r.problems, pairs: r.pairs, keycapGap: +r.keycapGap.toFixed(2), pcbWall: +r.pcbWall.toFixed(2) },
+      checks: summarizeChecks(r),
       ms: Math.round(performance.now() - t0),
     };
     cleanup();
     self.postMessage(out, transfer);
   } catch (err) {
-    try { cleanup(); } catch {}
-    self.postMessage({ id, error: String(err && err.message || err) });
+    try { cleanup(); } catch { /* the wasm heap may already be unusable; report the original error */ }
+    self.postMessage({ id, error: err?.message ?? String(err) });
   }
 };
 self.postMessage({ ready: true });

@@ -1,5 +1,5 @@
 {
-  "name": "mx-fidget",
+  "name": "switch-fidget",
   "version": "1.0.0",
   "description": "3D-printable hot-swap Cherry MX fidget with LED diffuser",
   "type": "module",
@@ -8,8 +8,6 @@
     "build": "node scripts/build.mjs",
     "check": "node scripts/check.mjs all"
   },
-  "keywords": [],
-  "author": "",
   "license": "ISC",
   "dependencies": {
     "manifold-3d": "^3.5.4"
@@ -17,5 +15,8 @@
   "devDependencies": {
     "three": "^0.160.0"
   },
-  "private": true
+  "private": true,
+  "engines": {
+    "node": ">=18"
+  }
 }
